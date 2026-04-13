@@ -1,0 +1,46 @@
+[tool.poetry]
+name = "estate-chat"
+version = "0.1.0"
+description = "RAG-powered document chat for estate planners"
+authors = ["Jelle Dochy"]
+readme = "README.md"
+packages = [{include = "app", from = "backend"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "~0.115.0"           # web framework
+uvicorn = {extras = ["standard"], version = "~0.30.0"}
+streamlit = "~1.38.0"          # UI framework (chat + graph + docs)
+streamlit-agraph = "~0.0.45"   # interactive graph visualization
+openai = "~1.50.0"             # LLM calls + embeddings
+chromadb = "~0.5.0"            # vector store
+langchain-text-splitters = "~0.2.0"  # chunking
+sentence-transformers = "~3.0.1"  # local embedding model for RAG
+PyMuPDF = "~1.24.0"            # PDF text extraction
+fpdf2 = "~2.8.0"               # synthetic PDF generation
+neo4j = "~5.20.0"              # knowledge graph driver
+llama-index = "0.9.48"         # PropertyGraphIndex for knowledge graphs (pinned stable)
+pydantic-settings = "~2.4.0"   # config management
+python-dotenv = "~1.0.0"       # env vars
+httpx = "~0.27.0"              # async HTTP client
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+pytest-asyncio = "^0.24.0"
+ruff = "^0.6.0"                # linter + formatter
+pre-commit = "^3.8.0"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
