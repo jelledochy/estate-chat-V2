@@ -4,7 +4,7 @@
   "service": "api",
   "workspaceFolder": "/workspace",
   "postCreateCommand": "cd /workspace && poetry check && poetry install --sync",
-  "forwardPorts": [8000, 8501, 9200, 7474],
+  "forwardPorts": [8000, 8501, 9200, 5601, 7474],
   "customizations": {
     "vscode": {
       "extensions": [

@@ -4,6 +4,7 @@ This is a minimal container skeleton with one `docker-compose.yml`.
 
 Current services:
 - `elasticsearch`
+- `kibana`
 - `neo4j`
 - `api` (empty Python container for future FastAPI code)
 - `ui` (empty Python container for future Streamlit code)
@@ -39,9 +40,39 @@ docker compose ps
 
 4. Open:
 - Elasticsearch: `http://localhost:9200`
+- Kibana: `http://localhost:5601`
 - Neo4j Browser: `http://localhost:7474`
 
 `api` and `ui` containers are intentionally idle (`sleep infinity`) until you add app code.
+
+## Kibana: How To Use It
+
+1. Open `http://localhost:5601`.
+2. Go to **Dev Tools**.
+3. Run a quick Elasticsearch check:
+
+```http
+GET /
+GET _cluster/health
+GET _cat/indices?v
+```
+
+4. Create a sample index and document:
+
+```http
+PUT demo-estate
+POST demo-estate/_doc
+{
+  "title": "Will and Testament",
+  "client": "Jane Doe"
+}
+GET demo-estate/_search
+```
+
+5. Optional UI view:
+- Go to **Stack Management -> Data Views**.
+- Create data view `demo-estate*`.
+- Use **Discover** to browse documents.
 
 ## How You Will Run FastAPI Later
 
