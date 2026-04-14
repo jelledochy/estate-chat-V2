@@ -1,22 +1,20 @@
 {
-  "name": "estate-chat-devcontainer",
+  "name": "Estate Planner Chat",
+
   "dockerComposeFile": "docker-compose.yml",
-  "service": "api",
+  "service": "app",
   "workspaceFolder": "/workspace",
   "postCreateCommand": "cd /workspace && poetry check && poetry install --sync",
-  "forwardPorts": [8000, 8501, 9200, 7474],
+  "forwardPorts": [8000, 8501, 7474, 7687],
   "customizations": {
     "vscode": {
       "extensions": [
         "ms-python.python",
         "ms-python.vscode-pylance",
-        "ms-azuretools.vscode-docker",
-        "tamasfe.even-better-toml",
         "charliermarsh.ruff"
       ],
       "settings": {
         "python.defaultInterpreterPath": "/usr/local/bin/python",
-        "python.testing.pytestEnabled": true,
         "[python]": {
           "editor.defaultFormatter": "charliermarsh.ruff",
           "editor.formatOnSave": true
