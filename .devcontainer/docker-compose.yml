@@ -69,12 +69,12 @@ services:
   api:
     build:
       context: .
-      dockerfile: docker/api.Dockerfile
+      dockerfile: ../docker/api.Dockerfile
     container_name: estate-api
     working_dir: /workspace
     command: sleep infinity
     volumes:
-      - .:/workspace
+      - ../:/workspace
     environment:
       ELASTICSEARCH_URL: http://elasticsearch:9200
       NEO4J_URI: bolt://neo4j:7687
@@ -93,12 +93,12 @@ services:
   ui:
     build:
       context: .
-      dockerfile: docker/ui.Dockerfile
+      dockerfile: ../docker/ui.Dockerfile
     container_name: estate-ui
     working_dir: /workspace
     command: sleep infinity
     volumes:
-      - .:/workspace
+      - ../:/workspace
     environment:
       API_BASE_URL: http://api:8000
     ports:
