@@ -1,53 +1,64 @@
-# Estate Chat V2 - Simple Container Setup
+# Estate Chat V2 - Simplified Container Setup
 
-This is a minimal container skeleton with one `docker-compose.yml`.
+This is a minimal container skeleton with `docker-compose.yml` featuring ChromaDB for vector storage.
 
 Current services:
-- `elasticsearch`
-- `kibana`
-- `neo4j`
-- `api` (empty Python container for future FastAPI code)
-- `ui` (empty Python container for future Streamlit code)
-
-No `backend/` or `frontend/` app files are created yet.
-No `requirements/*.txt` files are used.
+- `chromadb` - Vector database for document embeddings
+- `neo4j` - Knowledge graph database
+- `api` - FastAPI backend
+- `ui` - Streamlit frontend
 
 ## Quick Start
 
-If you are on Linux, set this once for Elasticsearch:
+1. Copy env file (if not already present):
 
 ```bash
-sudo sysctl -w vm.max_map_count=262144
-```
-
-1. Copy env file:
-
-```powershell
-Copy-Item .env.example .env
+cp .env.example .env
 ```
 
 2. Start everything:
 
-```powershell
+```bash
 docker compose up -d --build
 ```
 
 3. Check status:
 
-```powershell
+```bash
 docker compose ps
 ```
 
-4. Open:
-- Elasticsearch: `http://localhost:9200`
-- Kibana: `http://localhost:5601`
-- Neo4j Browser: `http://localhost:7474`
+4. Access services:
+- **Streamlit UI**: `http://localhost:8501`
+- **FastAPI API**: `http://localhost:8001`
+- **Neo4j Browser**: `http://localhost:7474`
+- **ChromaDB**: `http://localhost:8000`
 
-`api` and `ui` containers are intentionally idle (`sleep infinity`) until you add app code.
+## Environment Variables
 
-## Kibana: How To Use It
+Set these in your `.env` file:
+- `NEO4J_USER` (default: `neo4j`)
+- `NEO4J_PASSWORD` (default: `neo4jpassword`)
+- `OPENAI_API_KEY` (required for LLM functionality)
 
-1. Open `http://localhost:5601`.
+## Architecture
+
+- **API** runs on port 8000 (internally) → mapped to **8001** (host)
+- **UI** (Streamlit) runs on port 8501
+- **ChromaDB** runs on port 8000 (internally) → mapped to **8000** (host)
+- Services communicate internally via Docker network
+
+## Dependencies
+
+All Python dependencies are defined in `pyproject.toml` and installed via Poetry in the containers.
+
+Key packages:
+- FastAPI + Uvicorn (API)
+- Streamlit (UI)
+- ChromaDB (vector search)
+- Neo4j (knowledge graphs)
+- LangChain (chunking)
+- Sentence Transformers (embeddings)
 2. Go to **Dev Tools**.
 3. Run a quick Elasticsearch check:
 

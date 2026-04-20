@@ -14,4 +14,11 @@ ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /workspace
 
-CMD ["/bin/bash"]
+# Install Python dependencies
+RUN poetry install --no-dev --no-root
+
+# Expose API port
+EXPOSE 8000
+
+# Run FastAPI with Uvicorn
+CMD ["poetry", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

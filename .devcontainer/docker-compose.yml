@@ -1,46 +1,21 @@
 name: estate-chat-stack
 
 services:
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.3
-    container_name: estate-elasticsearch
+  chromadb:
+    image: ghcr.io/chroma-core/chroma:0.5.0
+    container_name: estate-chromadb
     environment:
-      discovery.type: single-node
-      xpack.security.enabled: "false"
-      xpack.license.self_generated.type: basic
-      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
+      IS_PERSISTENT: "true"
     ports:
-      - "9200:9200"
+      - "8000:8000"
     volumes:
-      - es_data:/usr/share/elasticsearch/data
+      - chromadb_data:/chroma/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:9200 >/dev/null || exit 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
       interval: 15s
       timeout: 10s
       retries: 20
       start_period: 30s
-    restart: unless-stopped
-
-  kibana:
-    image: docker.elastic.co/kibana/kibana:8.14.3
-    container_name: estate-kibana
-    environment:
-      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
-    ports:
-      - "5601:5601"
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:5601/api/status >/dev/null || exit 1"]
-      interval: 20s
-      timeout: 10s
-      retries: 20
-      start_period: 40s
     restart: unless-stopped
 
   neo4j:
@@ -72,19 +47,19 @@ services:
       dockerfile: ../docker/api.Dockerfile
     container_name: estate-api
     working_dir: /workspace
-    command: sleep infinity
+    command: poetry run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ../:/workspace
     environment:
-      ELASTICSEARCH_URL: http://elasticsearch:9200
+      CHROMADB_URL: http://chromadb:8000
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: ${NEO4J_USER:-neo4j}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD:-neo4jpassword}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     ports:
-      - "8000:8000"
+      - "8001:8000"
     depends_on:
-      elasticsearch:
+      chromadb:
         condition: service_healthy
       neo4j:
         condition: service_healthy
@@ -96,11 +71,10 @@ services:
       dockerfile: ../docker/ui.Dockerfile
     container_name: estate-ui
     working_dir: /workspace
-    command: sleep infinity
     volumes:
       - ../:/workspace
     environment:
-      API_BASE_URL: http://api:8000
+      BACKEND_API_URL: http://api:8000
     ports:
       - "8501:8501"
     depends_on:
@@ -108,5 +82,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  es_data:
+  chromadb_data:
   neo4j_data:

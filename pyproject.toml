@@ -13,8 +13,7 @@ uvicorn = {extras = ["standard"], version = "~0.30.0"}
 streamlit = "~1.38.0"          # UI framework (chat + graph + docs)
 streamlit-agraph = "~0.0.45"   # interactive graph visualization
 openai = "~1.50.0"             # LLM calls + embeddings
-elasticsearch = "~8.14.0"      # elasticsearch server
-langchain-elasticsearch = "~0.2.0"  # langchain elasticsearch integration
+chromadb = "~0.5.0"            # vector database
 langchain-text-splitters = "~0.2.0"  # chunking
 sentence-transformers = "~3.0.1"  # local embedding model for RAG
 PyMuPDF = "~1.24.0"            # PDF text extraction
