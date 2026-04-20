@@ -30,26 +30,106 @@ BATCH_SIZE = 64
 NAME_PATTERN = re.compile(r"\b([A-Z][a-z]+(?:-[A-Z][a-z]+)?(?:\s+[A-Z][a-z]+(?:-[A-Z][a-z]+)?)+)\b")
 DISALLOWED_NAME_TOKENS = {
     "and",
+    "amount",
     "article",
     "authority",
     "bank",
     "belgium",
+    "borrower",
+    "borrowers",
     "bruges",
+    "buyer",
+    "buyers",
     "certificate",
+    "clause",
+    "clauses",
+    "costs",
     "date",
+    "deed",
+    "default",
     "document",
+    "execution",
     "family",
     "id",
+    "interest",
     "issue",
+    "lender",
+    "lenders",
+    "loan",
     "mortgage",
     "notarial",
     "notary",
+    "obligation",
+    "obligations",
+    "parties",
+    "party",
     "place",
+    "position",
+    "property",
     "public",
+    "rate",
+    "registry",
     "relationship",
-    "seal",
+    "repayment",
+    "sale",
+    "secured",
+    "seller",
     "signature",
+    "signatures",
+    "seal",
+    "terms",
+    "title",
+    "undertakings",
     "type",
+    "witness",
+    "witnesses",
+}
+LEADING_NON_PERSON_TOKENS = {"a", "an", "any", "the", "this", "that", "these", "those"}
+TITLE_TOKENS = {"dr", "mr", "mrs", "ms", "meester"}
+CORPORATE_TOKENS = {
+    "ag",
+    "bank",
+    "bv",
+    "company",
+    "corp",
+    "corporation",
+    "inc",
+    "incorporated",
+    "llc",
+    "ltd",
+    "nv",
+    "sa",
+    "sprl",
+    "vastgoed",
+}
+NAME_CONNECTOR_TOKENS = {
+    "da",
+    "de",
+    "del",
+    "della",
+    "den",
+    "der",
+    "di",
+    "du",
+    "la",
+    "le",
+    "van",
+    "von",
+}
+DATE_PATTERN = re.compile(
+    r"\b([0-3]?\d\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+(?:19|20)\d{2})\b",
+    flags=re.IGNORECASE,
+)
+YEAR_PATTERN = re.compile(r"\b((?:19|20)\d{2})\b")
+EUR_AMOUNT_PATTERN = re.compile(r"\b(?:EUR|€)\s*([0-9][0-9.,]*)\b", flags=re.IGNORECASE)
+PERCENT_PATTERN = re.compile(r"\b([0-9]+(?:[.,][0-9]+)?)\s*%\b")
+ROLE_KEYWORDS: dict[str, set[str]] = {
+    "borrower": {" borrower", " borrowers"},
+    "buyer": {" buyer", " buyers"},
+    "seller": {" seller", " sellers"},
+    "lender": {" lender", " lenders"},
+    "notary": {" notary", " notarial"},
+    "witness": {" witness", " witnesses"},
 }
 
 
@@ -71,12 +151,71 @@ def extract_person_names(text: str) -> list[str]:
 
     for match in NAME_PATTERN.finditer(text):
         candidate = " ".join(match.group(1).split())
-        lowered_tokens = [token.strip(".,:;()[]{}").lower() for token in candidate.split()]
-        if any(token in DISALLOWED_NAME_TOKENS for token in lowered_tokens):
+        normalized = normalize_person_candidate(candidate)
+        if normalized is None:
             continue
-        names.add(candidate)
+        names.add(normalized)
 
     return sorted(names)
+
+
+def normalize_person_candidate(candidate: str) -> str | None:
+    tokens = [token.strip(".,:;()[]{}\"'") for token in candidate.split()]
+    tokens = [token for token in tokens if token]
+    if len(tokens) < 2:
+        return None
+
+    # Strip common honorific prefixes (e.g. "Meester Jan Claes" -> "Jan Claes").
+    while tokens and tokens[0].lower().rstrip(".") in TITLE_TOKENS:
+        tokens.pop(0)
+    if len(tokens) < 2:
+        return None
+
+    lowered_tokens = [token.lower() for token in tokens]
+    if lowered_tokens[0] in LEADING_NON_PERSON_TOKENS:
+        return None
+
+    if any(token in DISALLOWED_NAME_TOKENS for token in lowered_tokens):
+        return None
+    if any(token in CORPORATE_TOKENS for token in lowered_tokens):
+        return None
+
+    proper_name_token_count = 0
+    for token, lowered in zip(tokens, lowered_tokens):
+        if lowered in NAME_CONNECTOR_TOKENS:
+            continue
+        if not re.fullmatch(r"[A-Z][a-z]+(?:-[A-Z][a-z]+)?", token):
+            return None
+        proper_name_token_count += 1
+
+    if proper_name_token_count < 2:
+        return None
+
+    return " ".join(tokens)
+
+
+def extract_chunk_features(text: str) -> dict[str, str | int]:
+    lowered = f" {text.lower()} "
+    dates = sorted({match.strip() for match in DATE_PATTERN.findall(text)})
+    years = sorted({int(match) for match in YEAR_PATTERN.findall(text)})
+    amounts = sorted({match.strip() for match in EUR_AMOUNT_PATTERN.findall(text)})
+    percentages = sorted({match.replace(",", ".").strip() for match in PERCENT_PATTERN.findall(text)})
+    roles = sorted(
+        role
+        for role, keywords in ROLE_KEYWORDS.items()
+        if any(keyword in lowered for keyword in keywords)
+    )
+
+    return {
+        "chunk_char_length": len(text),
+        "has_currency_amount": int(bool(amounts)),
+        "has_percentage": int(bool(percentages)),
+        "mentioned_dates": json.dumps(dates, ensure_ascii=False),
+        "mentioned_years": json.dumps(years, ensure_ascii=False),
+        "amounts_eur": json.dumps(amounts, ensure_ascii=False),
+        "rates_percent": json.dumps(percentages, ensure_ascii=False),
+        "legal_roles_mentioned": json.dumps(roles, ensure_ascii=False),
+    }
 
 
 def build_chunks(
@@ -128,7 +267,7 @@ def build_chunks(
 
 def chunk_to_chroma_metadata(chunk: DocumentChunk) -> dict[str, str | int]:
     page_number = chunk.metadata.page_numbers[0] if chunk.metadata.page_numbers else 0
-    return {
+    metadata: dict[str, str | int] = {
         "document_id": chunk.metadata.document_id,
         "document_type": str(chunk.metadata.document_type),
         "page_number": page_number,
@@ -136,6 +275,8 @@ def chunk_to_chroma_metadata(chunk: DocumentChunk) -> dict[str, str | int]:
             chunk.metadata.person_names_mentioned, ensure_ascii=False
         ),
     }
+    metadata.update(extract_chunk_features(chunk.text))
+    return metadata
 
 
 def upsert_chunks(
