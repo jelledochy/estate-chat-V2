@@ -12,13 +12,14 @@ fastapi = "~0.115.0"           # web framework
 uvicorn = {extras = ["standard"], version = "~0.30.0"}
 streamlit = "~1.38.0"          # UI framework (chat + graph + docs)
 streamlit-agraph = "~0.0.45"   # interactive graph visualization
-openai = "~1.50.0"             # LLM calls + embeddings
+openai = ">=1.50.0,<3.0.0"     # LLM calls + embeddings
 chromadb = "~0.5.0"            # vector database
 langchain-text-splitters = "~0.2.0"  # chunking
 PyMuPDF = "~1.24.0"            # PDF text extraction
 fpdf2 = "~2.8.0"               # synthetic PDF generation
 neo4j = "~5.20.0"              # knowledge graph driver
-llama-index = "0.9.48"         # PropertyGraphIndex for knowledge graphs (pinned stable)
+llama-index = "0.14.20"        # PropertyGraphIndex core + OpenAI LLM/embedding integrations
+llama-index-graph-stores-neo4j = "0.7.0"  # Neo4j PropertyGraphStore integration
 pydantic-settings = "~2.4.0"   # config management
 python-dotenv = "~1.0.0"       # env vars
 httpx = "~0.27.0"              # async HTTP client

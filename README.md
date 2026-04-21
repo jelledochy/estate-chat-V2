@@ -39,7 +39,38 @@ docker compose ps
 Set these in your `.env` file:
 - `NEO4J_USER` (default: `neo4j`)
 - `NEO4J_PASSWORD` (default: `neo4jpassword`)
+- `NEO4J_URL` (default: `bolt://localhost:7687`)
+- `NEO4J_URI` (optional fallback if `NEO4J_URL` is not set; use `bolt://neo4j:7687` inside Docker Compose)
+- `NEO4J_DATABASE` (default: `neo4j`)
 - `OPENAI_API_KEY` (required for LLM functionality)
+- `OPENAI_GRAPH_MODEL` (optional, defaults to `OPENAI_CHAT_MODEL` or `gpt-4o-mini`)
+- `OPENAI_GRAPH_EMBEDDING_MODEL` (optional, defaults to `text-embedding-3-small`)
+
+## Property Graph Build
+
+The first graph stage builds a LlamaIndex `PropertyGraphIndex` from the existing extracted JSON files in `backend/data/extracted`.
+
+What the build does:
+- loads the shared `ExtractedDocument` model so graph and vector ingestion use the same source data
+- creates one LlamaIndex `Document` per extracted PDF page, preserving `document_id`, `document_type`, `filename`, and `page_number`
+- uses a schema-guided estate-document extractor for people, organizations, properties, documents, dates, money amounts, roles, and legal events
+- writes the graph to Neo4j by default through `Neo4jPropertyGraphStore`
+
+Run the basic graph build from the project root:
+
+```bash
+python backend/data/preprocessing/run_property_graph.py
+```
+
+Before running it, Neo4j must be reachable on the configured Bolt URL. From the host machine that is usually `bolt://localhost:7687`; from inside Docker Compose it is usually `bolt://neo4j:7687`.
+
+Or from the preprocessing folder:
+
+```bash
+python run_property_graph.py
+```
+
+This stage only creates the graph. The later prompt-composition stage can retrieve graph paths and normalize them into text alongside document chunks.
 
 ## Architecture
 
