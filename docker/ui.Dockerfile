@@ -14,8 +14,11 @@ ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /workspace
 
+# Copy dependency files
+COPY pyproject.toml poetry.lock* ./
+
 # Install Python dependencies
-RUN poetry install --no-dev --no-root
+RUN poetry install --no-root
 
 # Expose Streamlit port
 EXPOSE 8501
