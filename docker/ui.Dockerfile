@@ -17,6 +17,9 @@ WORKDIR /workspace
 # Copy dependency files
 COPY pyproject.toml poetry.lock* ./
 
+# Copy application code
+COPY streamlit_app ./streamlit_app
+
 # Install Python dependencies
 RUN poetry install --no-root
 

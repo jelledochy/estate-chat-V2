@@ -13,9 +13,13 @@ RUN curl -sSL https://install.python-poetry.org | python3 -
 ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /workspace
+ENV PYTHONPATH="/workspace/backend:/workspace"
 
 # Copy dependency files
 COPY pyproject.toml poetry.lock* ./
+
+# Copy application code
+COPY backend ./backend
 
 # Install Python dependencies
 RUN poetry install --no-root
