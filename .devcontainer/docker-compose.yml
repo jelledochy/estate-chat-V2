@@ -19,7 +19,7 @@ services:
     restart: unless-stopped
 
   neo4j:
-    image: neo4j:5.22-community
+    image: neo4j:5.26-community
     container_name: estate-neo4j
     environment:
       NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-neo4jpassword}"

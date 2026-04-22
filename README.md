@@ -63,6 +63,7 @@ python backend/data/preprocessing/run_property_graph.py
 ```
 
 Before running it, Neo4j must be reachable on the configured Bolt URL. From the host machine that is usually `bolt://localhost:7687`; from inside Docker Compose it is usually `bolt://neo4j:7687`.
+The graph build requires Neo4j 5.23 or newer because the LlamaIndex Neo4j store emits modern Cypher subquery syntax.
 
 Or from the preprocessing folder:
 
