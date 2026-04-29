@@ -130,7 +130,7 @@ def load_cross_encoder() -> Any:
 
 
 def load_collection() -> tuple[OpenAI, chromadb.Collection]:
-    load_dotenv(PROJECT_ROOT / ".env", override=False)
+    load_dotenv(PROJECT_ROOT / ".env", override=True)
     if not (os.getenv("OPENAI_API_KEY") or "").strip():
         raise ValueError(
             "OPENAI_API_KEY is missing. Add it to /workspace/.env or your environment."
@@ -396,11 +396,7 @@ def build_prompt(
     if graph_entries:
         context_sections.append("GRAPH RETRIEVAL:\n" + "\n\n".join(graph_entries))
 
-    context = (
-        "\n\n".join(context_sections)
-        if context_sections
-        else "No relevant context found."
-    )
+    context = "\n\n".join(context_sections) if context_sections else "No relevant context found."
     return prompt_template.format(question=query, context=context).strip()
 
 
