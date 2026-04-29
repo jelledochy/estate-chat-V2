@@ -5,6 +5,8 @@ import json
 import os
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from pathlib import Path
 from time import time
 from typing import Any
@@ -26,6 +28,7 @@ CROSS_ENCODER_MODEL_NAME = os.getenv(
 )
 RETRIEVAL_CANDIDATE_MULTIPLIER = int(os.getenv("RAG_RETRIEVAL_CANDIDATE_MULTIPLIER", "4"))
 GRAPH_RESULT_LIMIT = int(os.getenv("RAG_GRAPH_RESULT_LIMIT", "25"))
+GRAPH_MODEL = os.getenv("OPENAI_GRAPH_MODEL") or DEFAULT_LLM_MODEL
 NEO4J_URL = os.getenv("NEO4J_URL") or os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "neo4jpassword")
@@ -129,6 +132,7 @@ def load_cross_encoder() -> Any:
     return _CROSS_ENCODER
 
 
+@lru_cache(maxsize=1)
 def load_collection() -> tuple[OpenAI, chromadb.Collection]:
     load_dotenv(PROJECT_ROOT / ".env", override=True)
     if not (os.getenv("OPENAI_API_KEY") or "").strip():
@@ -187,7 +191,8 @@ def search(
     return rows
 
 
-def load_graph_retriever(*, model: str = DEFAULT_LLM_MODEL) -> Any:
+@lru_cache(maxsize=4)
+def load_graph_retriever(*, model: str = GRAPH_MODEL) -> Any:
     try:
         from llama_index.core.indices.property_graph import TextToCypherRetriever
     except ModuleNotFoundError as exc:
@@ -219,7 +224,7 @@ def load_graph_retriever(*, model: str = DEFAULT_LLM_MODEL) -> Any:
     )
 
 
-def graph_search(*, query: str, model: str = DEFAULT_LLM_MODEL) -> list[dict[str, Any]]:
+def graph_search(*, query: str, model: str = GRAPH_MODEL) -> list[dict[str, Any]]:
     retriever = load_graph_retriever(model=model)
     nodes = retriever.retrieve(query)
 
@@ -424,24 +429,35 @@ def rag(
     *,
     query: str,
     model: str = DEFAULT_LLM_MODEL,
+    graph_model: str = GRAPH_MODEL,
     top_k: int = DEFAULT_TOP_K,
 ) -> dict[str, Any]:
     t0 = time()
     openai_client, collection = load_collection()
     candidate_k = max(top_k, top_k * RETRIEVAL_CANDIDATE_MULTIPLIER)
 
-    search_results = search(
-        openai_client=openai_client,
-        collection=collection,
-        query=query,
-        top_k=candidate_k,
-    )
     graph_error = None
-    try:
-        graph_results = graph_search(query=query, model=model)
-    except Exception as exc:
-        graph_results = []
-        graph_error = str(exc)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        search_future = executor.submit(
+            search,
+            openai_client=openai_client,
+            collection=collection,
+            query=query,
+            top_k=candidate_k,
+        )
+        graph_future = executor.submit(
+            graph_search,
+            query=query,
+            model=graph_model,
+            openai_client=openai_client,
+        )
+
+        search_results = search_future.result()
+        try:
+            graph_results = graph_future.result()
+        except Exception as exc:
+            graph_results = []
+            graph_error = str(exc)
 
     search_results, graph_results = rerank_context(
         query=query,
@@ -482,6 +498,7 @@ def rag(
     return {
         "answer": answer,
         "model_used": model,
+        "graph_model_used": graph_model,
         "embedding_model": EMBEDDING_MODEL_NAME,
         "reranker_model": CROSS_ENCODER_MODEL_NAME,
         "collection": COLLECTION_NAME,
@@ -507,6 +524,11 @@ def main() -> int:
     parser.add_argument("query", help="User question")
     parser.add_argument("--model", default=DEFAULT_LLM_MODEL, help="OpenAI chat model")
     parser.add_argument(
+        "--graph-model",
+        default=GRAPH_MODEL,
+        help="OpenAI model used for graph-to-Cypher retrieval",
+    )
+    parser.add_argument(
         "--top-k",
         type=int,
         default=DEFAULT_TOP_K,
@@ -527,6 +549,7 @@ def main() -> int:
         result = rag(
             query=args.query,
             model=args.model,
+            graph_model=args.graph_model,
             top_k=args.top_k,
         )
     except Exception as exc:
