@@ -91,6 +91,17 @@ GRAPH_ALLOWED_OUTPUT_FIELDS = [
     "page_number",
 ]
 
+_CYPHER_CODE_BLOCK_RE = re.compile(
+    r"```(?:\s*cypher)?\s*(.*?)\s*```",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_CYPHER_START_RE = re.compile(
+    r"\b(?:MATCH|OPTIONAL MATCH|WITH|RETURN|CALL|UNWIND|MERGE|CREATE|DELETE|SET|REMOVE|"
+    r"FOREACH|LOAD CSV|USE|SHOW|START DATABASE|STOP DATABASE|ALTER|DROP|LIMIT|ORDER BY|"
+    r"SKIP|OFFSET|WHERE)\b",
+    flags=re.IGNORECASE,
+)
+
 
 def _parse_json_list(value: Any) -> list[Any]:
     if isinstance(value, list):
@@ -114,6 +125,33 @@ def _parse_json_dict(value: Any) -> dict[str, Any]:
     except Exception:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _clean_cypher_query(cypher: str) -> str:
+    text = (cypher or "").strip()
+    if not text:
+        return ""
+
+    fence_match = _CYPHER_CODE_BLOCK_RE.search(text)
+    if fence_match:
+        text = fence_match.group(1).strip()
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return ""
+
+    text = "\n".join(lines).strip("`").strip()
+    start_match = _CYPHER_START_RE.search(text)
+    if start_match:
+        text = text[start_match.start() :].strip()
+    return text
+
+
+def _cypher_validator(cypher: str) -> str:
+    cleaned = _clean_cypher_query(cypher)
+    if not cleaned:
+        raise ValueError("Graph retriever produced an empty Cypher query.")
+    return cleaned
 
 
 def load_cross_encoder() -> Any:
@@ -220,12 +258,25 @@ def load_graph_retriever(*, model: str = GRAPH_MODEL) -> Any:
     return TextToCypherRetriever(
         graph_store,
         llm=LlamaOpenAI(model=model, temperature=0.0),
-        allowed_output_field=GRAPH_ALLOWED_OUTPUT_FIELDS,
+        cypher_validator=_cypher_validator,
+        allowed_output_fields=GRAPH_ALLOWED_OUTPUT_FIELDS,
     )
 
 
-def graph_search(*, query: str, model: str = GRAPH_MODEL) -> list[dict[str, Any]]:
+def graph_search(
+    *,
+    query: str,
+    model: str = GRAPH_MODEL,
+    openai_client: OpenAI | None = None,
+) -> list[dict[str, Any]]:
     retriever = load_graph_retriever(model=model)
+    graph_store = getattr(retriever, "_graph_store", None)
+    if graph_store is not None:
+        node_count = graph_store.structured_query("MATCH (n) RETURN count(n) AS count")
+        if node_count and int(node_count[0].get("count", 0)) == 0:
+            raise RuntimeError(
+                "Neo4j graph is empty. Build the property graph before expecting graph sources."
+            )
     nodes = retriever.retrieve(query)
 
     facts: list[dict[str, Any]] = []
@@ -449,7 +500,6 @@ def rag(
             graph_search,
             query=query,
             model=graph_model,
-            openai_client=openai_client,
         )
 
         search_results = search_future.result()
