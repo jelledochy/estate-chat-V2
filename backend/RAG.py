@@ -91,6 +91,26 @@ GRAPH_ALLOWED_OUTPUT_FIELDS = [
     "page_number",
 ]
 
+GRAPH_TEXT_TO_CYPHER_TEMPLATE = """
+Task: Generate a Cypher statement to query a Neo4j graph database.
+Instructions:
+Use only the relationship types and properties in the schema.
+Return only the Cypher statement.
+Do not include explanations, apologies, or markdown fences.
+Respect relationship direction exactly as shown in the schema.
+Use explicit aliases in RETURN clauses, such as person_name, property_name, document_id, or relation_type.
+For questions about how multiple parties relate through the same act or deed, join them through the shared DOCUMENT or PROPERTY node when appropriate.
+Prefer the most specific relationship names present in the schema over semantically similar alternatives.
+When a question asks about a person receiving, donating, buying, selling, or parenting, infer the correct relationship from the schema instead of inventing a new pattern.
+If the question asks who, what, which, or where, return the fields needed to answer that question directly.
+
+Schema:
+{schema}
+
+Question:
+{question}
+""".strip()
+
 _CYPHER_CODE_BLOCK_RE = re.compile(
     r"```(?:\s*cypher)?\s*(.*?)\s*```",
     flags=re.IGNORECASE | re.DOTALL,
@@ -258,8 +278,9 @@ def load_graph_retriever(*, model: str = GRAPH_MODEL) -> Any:
     return TextToCypherRetriever(
         graph_store,
         llm=LlamaOpenAI(model=model, temperature=0.0),
+        text_to_cypher_template=GRAPH_TEXT_TO_CYPHER_TEMPLATE,
         cypher_validator=_cypher_validator,
-        allowed_output_fields=GRAPH_ALLOWED_OUTPUT_FIELDS,
+        include_raw_response_as_metadata=True,
     )
 
 
@@ -296,7 +317,10 @@ def graph_search(
 def _node_to_graph_fact(node_with_score: Any, rank: int) -> dict[str, Any] | None:
     node = getattr(node_with_score, "node", node_with_score)
     metadata = getattr(node, "metadata", {}) or {}
-    text = _node_content(node)
+    #response_text = _graph_response_to_text(metadata.get("response"))
+    text = _node_content(node) #or response_text
+    if _is_empty_cypher_response(text):
+        return None
     triplet = _extract_triplet(metadata.get("triplet")) or _extract_triplet(node)
     if triplet is None:
         triplet = _extract_triplet_from_text(text)
@@ -313,6 +337,30 @@ def _node_to_graph_fact(node_with_score: Any, rank: int) -> dict[str, Any] | Non
         "metadata": metadata,
         "graph_score": getattr(node_with_score, "score", None),
     }
+
+
+#def _graph_response_to_text(response: Any) -> str:
+#    if response in (None, "", []):
+#        return ""
+#
+#    rows = response if isinstance(response, list) else [response]
+#    parts: list[str] = []
+#    for row in rows:
+#        if isinstance(row, dict):
+#            values = []
+#            for key, value in row.items():
+#                if value is None:
+#                    continue
+#                values.append(f"{key}: {value}")
+#            if values:
+#                parts.append("; ".join(values))
+#        elif row is not None:
+#            parts.append(str(row))
+#    return "\n".join(parts).strip()
+#
+#
+def _is_empty_cypher_response(text: str) -> bool:
+    return bool(re.search(r"Cypher Response:\s*\[\s*\]\s*$", text.strip(), flags=re.DOTALL))
 
 
 def _node_content(node: Any) -> str:
@@ -540,6 +588,8 @@ def rag(
                 "rank": rank,
                 "fact_id": row.get("fact_id"),
                 "triplet": _triplet_display(row.get("triplet")),
+                "text": row.get("text"),
+                "cypher_query": (row.get("metadata") or {}).get("query"),
                 "rerank_score": row.get("rerank_score"),
                 "graph_score": row.get("graph_score"),
             }
