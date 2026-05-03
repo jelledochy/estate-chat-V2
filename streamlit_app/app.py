@@ -32,6 +32,27 @@ def show_request_error(exc: Exception) -> None:
     st.error(f"Unexpected error: {exc}")
 
 
+def render_sources(sources: list[dict]) -> None:
+    if not sources:
+        return
+
+    with st.expander("Sources"):
+        for source in sources:
+            document_id = source.get("document_id") or "unknown"
+            document_type = source.get("document_type") or "unknown"
+            pages = source.get("page_numbers") or []
+            page_label = ", ".join(str(page) for page in pages) if pages else "-"
+            citation_label = source.get("citation_label")
+            title = citation_label or f"{document_id} | {document_type} | pages: {page_label}"
+            st.markdown(f"**{title}**")
+            if not citation_label:
+                st.caption(f"{document_id} | {document_type} | pages: {page_label}")
+            elif document_type != "unknown" or pages:
+                st.caption(f"{document_type} | pages: {page_label}")
+            if source.get("excerpt"):
+                st.caption(source["excerpt"])
+
+
 st.title("Estate Planner Chat")
 st.caption("Ask a question and the FastAPI backend will answer with `backend/RAG.py`.")
 
@@ -52,16 +73,7 @@ for message in st.session_state["messages"]:
         st.write(message["content"])
 
         sources = message.get("sources") or []
-        if sources:
-            with st.expander("Sources"):
-                for source in sources:
-                    document_id = source.get("document_id") or "unknown"
-                    document_type = source.get("document_type") or "unknown"
-                    pages = source.get("page_numbers") or []
-                    page_label = ", ".join(str(page) for page in pages) if pages else "-"
-                    st.markdown(f"**{document_id}** | {document_type} | pages: {page_label}")
-                    if source.get("excerpt"):
-                        st.caption(source["excerpt"])
+        render_sources(sources)
 
         if message.get("uncertainty_message"):
             st.warning(message["uncertainty_message"])
@@ -85,16 +97,7 @@ if prompt:
         st.write(answer)
 
         sources = result.get("sources") or []
-        if sources:
-            with st.expander("Sources"):
-                for source in sources:
-                    document_id = source.get("document_id") or "unknown"
-                    document_type = source.get("document_type") or "unknown"
-                    pages = source.get("page_numbers") or []
-                    page_label = ", ".join(str(page) for page in pages) if pages else "-"
-                    st.markdown(f"**{document_id}** | {document_type} | pages: {page_label}")
-                    if source.get("excerpt"):
-                        st.caption(source["excerpt"])
+        render_sources(sources)
 
         uncertainty_message = result.get("uncertainty_message")
         if uncertainty_message:

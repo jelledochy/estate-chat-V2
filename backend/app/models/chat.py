@@ -29,6 +29,7 @@ class SourceDocument(AppBaseModel):
     document_type: DocumentType | str | None = None
     page_numbers: list[int] = Field(default_factory=list)
     excerpt: str | None = None
+    citation_label: str | None = None
 
 
 class TransactionType(str, Enum):

@@ -24,9 +24,17 @@ NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 
 PROMPT_TEMPLATE = """
 You are an estate-document assistant.
-Answer the QUESTION based only on the CONTEXT from retrieved notarial documents and graph facts.
+Answer the QUESTION based only on the CONTEXT from retrieved notarial documents and
+supplemental graph context.
 If the context is insufficient, clearly say what is missing and do not invent details.
-When you cite facts, mention source ids in square brackets like [Document 1] or [Graph 1].
+Use graph context only as supplemental context. Do not mention it as a source and
+do not cite graph IDs or triplets in the answer.
+When you cite facts, cite only the document citation_label exactly in square brackets,
+like [certificate_016.pdf p.1].
+Do not cite generic labels like [Document 1], [Document source], [Graph 1],
+[Graph context], or [graph-1].
+If document context and graph context disagree, prefer the document context and say that
+the retrieved context conflicts instead of presenting the conflicting fact as confirmed.
 
 QUESTION:
 {question}
@@ -37,7 +45,8 @@ CONTEXT:
 
 
 DOCUMENT_ENTRY_TEMPLATE = """
-[Document {rank}]
+Document source:
+citation_label: {citation_label}
 chunk_id: {chunk_id}
 document_id: {document_id}
 document_type: {document_type}
@@ -55,9 +64,7 @@ text:
 
 
 GRAPH_ENTRY_TEMPLATE = """
-[Graph {rank}]
-fact_id: {fact_id}
-rerank_score: {rerank_score:.6f}
+Graph context:
 triplet: {triplet}
 text:
 {text}

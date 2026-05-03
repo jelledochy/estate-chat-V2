@@ -140,7 +140,7 @@ def _documents_by_id() -> dict[str, dict[str, Any]]:
 
 def _source_excerpt(
     document_id: str,
-    page_number: int | None,
+    page_numbers: list[int],
     *,
     max_chars: int = 260,
 ) -> str | None:
@@ -148,16 +148,26 @@ def _source_excerpt(
     if not document:
         return None
 
+    wanted_pages = {page for page in page_numbers if page > 0}
+    snippets: list[str] = []
     pages = document.get("pages") or []
     for page in pages:
         if not isinstance(page, dict):
             continue
-        if page_number is not None and page.get("page_number") != page_number:
+        try:
+            current_page_number = int(page.get("page_number"))
+        except (TypeError, ValueError):
+            current_page_number = 0
+        if wanted_pages and current_page_number not in wanted_pages:
             continue
         text = _clean_text(page.get("text"))
         if text:
-            return text[:max_chars].rstrip() + ("..." if len(text) > max_chars else "")
-    return None
+            snippet = text[:max_chars].rstrip() + ("..." if len(text) > max_chars else "")
+            if current_page_number > 0:
+                snippets.append(f"Page {current_page_number}: {snippet}")
+            else:
+                snippets.append(snippet)
+    return " ".join(snippets) if snippets else None
 
 
 def _rag_source_to_chat_source(raw_source: dict[str, Any]) -> SourceDocument | None:
@@ -165,19 +175,32 @@ def _rag_source_to_chat_source(raw_source: dict[str, Any]) -> SourceDocument | N
     if not document_id:
         return None
 
-    page_number: int | None = None
-    try:
-        page_number = int(raw_source.get("page_number"))
-    except (TypeError, ValueError):
-        page_number = None
+    page_numbers = _page_numbers_from_source(raw_source)
 
     return SourceDocument(
         document_id=document_id,
         filename=f"{document_id}.pdf",
         document_type=raw_source.get("document_type") or "unknown",
-        page_numbers=[page_number] if page_number and page_number > 0 else [],
-        excerpt=_source_excerpt(document_id, page_number),
+        page_numbers=page_numbers,
+        excerpt=_source_excerpt(document_id, page_numbers),
+        citation_label=raw_source.get("citation_label"),
     )
+
+
+def _page_numbers_from_source(raw_source: dict[str, Any]) -> list[int]:
+    raw_page_numbers = raw_source.get("page_numbers")
+    if not isinstance(raw_page_numbers, list):
+        raw_page_numbers = [raw_source.get("page_number")]
+
+    page_numbers: list[int] = []
+    for raw_page_number in raw_page_numbers:
+        try:
+            page_number = int(raw_page_number)
+        except (TypeError, ValueError):
+            continue
+        if page_number > 0 and page_number not in page_numbers:
+            page_numbers.append(page_number)
+    return sorted(page_numbers)
 
 
 def _is_uncertain_answer(

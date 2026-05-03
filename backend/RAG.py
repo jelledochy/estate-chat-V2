@@ -21,8 +21,8 @@ from backend.rag.constants import (  # noqa: E402
 )
 from backend.rag.graph_search import graph_search  # noqa: E402
 from backend.rag.helpers import (  # noqa: E402
+    _document_citation_label,
     _low_confidence_warning,
-    _triplet_display,
     build_prompt,
     llm,
     rerank_context,
@@ -86,7 +86,6 @@ def rag(
         "top_k": top_k,
         "response_time_seconds": round(time() - start_time, 3),
         "sources": _document_sources(document_results),
-        "graph_sources": _graph_sources(graph_results),
         "graph_error": graph_error,
         "confidence_warning": confidence_warning,
         "low_confidence": confidence_warning is not None,
@@ -98,37 +97,58 @@ def rag(
 
 
 def _document_sources(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    sources = []
+    grouped: dict[str, dict[str, Any]] = {}
     for rank, row in enumerate(rows, start=1):
         metadata = row.get("metadata", {})
-        sources.append(
+        document_id = str(metadata.get("document_id") or "").strip()
+        if not document_id:
+            continue
+        page_number = _positive_int_or_none(metadata.get("page_number"))
+        group_key = f"{document_id}:p{page_number or 0}"
+
+        source = grouped.setdefault(
+            group_key,
             {
                 "rank": rank,
                 "chunk_id": row.get("chunk_id"),
+                "chunk_ids": [],
                 "document_id": metadata.get("document_id"),
                 "document_type": metadata.get("document_type"),
-                "page_number": metadata.get("page_number"),
+                "page_number": None,
+                "page_numbers": [],
                 "distance": row.get("distance"),
                 "rerank_score": row.get("rerank_score"),
-            }
+                "citation_label": _document_citation_label(row),
+            },
         )
-    return sources
+        chunk_id = row.get("chunk_id")
+        if chunk_id and chunk_id not in source["chunk_ids"]:
+            source["chunk_ids"].append(chunk_id)
+
+        if page_number is not None and page_number not in source["page_numbers"]:
+            source["page_numbers"].append(page_number)
+            source["page_numbers"].sort()
+            source["page_number"] = source["page_numbers"][0]
+
+        if source.get("distance") is None or (
+            row.get("distance") is not None and row["distance"] < source["distance"]
+        ):
+            source["distance"] = row.get("distance")
+        if source.get("rerank_score") is None or (
+            row.get("rerank_score") is not None
+            and row["rerank_score"] > source["rerank_score"]
+        ):
+            source["rerank_score"] = row.get("rerank_score")
+
+    return sorted(grouped.values(), key=lambda source: int(source.get("rank") or 0))
 
 
-def _graph_sources(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    sources = []
-    for rank, row in enumerate(rows, start=1):
-        sources.append(
-            {
-                "rank": rank,
-                "fact_id": row.get("fact_id"),
-                "triplet": _triplet_display(row.get("triplet")),
-                "text": row.get("text"),
-                "cypher_query": (row.get("metadata") or {}).get("query"),
-                "rerank_score": row.get("rerank_score"),
-            }
-        )
-    return sources
+def _positive_int_or_none(value: Any) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
 
 
 def main(query: str) -> dict[str, Any]:

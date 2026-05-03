@@ -61,7 +61,7 @@ def graph_search(
         node_count = graph_store.structured_query("MATCH (n) RETURN count(n) AS count")
         if node_count and int(node_count[0].get("count", 0)) == 0:
             raise RuntimeError(
-                "Neo4j graph is empty. Build the property graph before expecting graph sources."
+                "Neo4j graph is empty. Build the property graph before expecting graph context."
             )
     nodes = retriever.retrieve(query)
 
@@ -75,7 +75,6 @@ def graph_search(
             if key in seen:
                 continue
             seen.add(key)
-            fact["fact_id"] = f"graph-{len(facts) + 1}"
             facts.append(fact)
             if len(facts) >= GRAPH_RESULT_LIMIT:
                 return facts

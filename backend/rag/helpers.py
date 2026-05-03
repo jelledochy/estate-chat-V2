@@ -183,7 +183,6 @@ def _node_to_graph_facts(
     return [
         {
             "kind": "graph",
-            "fact_id": "",
             "triplet": triplet,
             "text": fact_text,
             "metadata": metadata,
@@ -260,7 +259,6 @@ def _cypher_rows_to_graph_facts(
         facts.append(
             {
                 "kind": "graph",
-                "fact_id": "",
                 "triplet": triplet,
                 "text": text,
                 "metadata": {
@@ -415,6 +413,20 @@ def _triplet_display(triplet: tuple[str, str, str] | None) -> str:
     return f"{triplet[0]} -> {triplet[1]} -> {triplet[2]}"
 
 
+def _document_citation_label(row: dict[str, Any]) -> str:
+    metadata = row.get("metadata", {})
+    document_id = str(metadata.get("document_id") or row.get("document_id") or "unknown").strip()
+    filename = document_id if document_id.endswith(".pdf") else f"{document_id}.pdf"
+    page_number = metadata.get("page_number") or row.get("page_number")
+    try:
+        page = int(page_number)
+    except (TypeError, ValueError):
+        page = 0
+    if page > 0:
+        return f"{filename} p.{page}"
+    return filename
+
+
 def rerank_context(
     *,
     query: str,
@@ -447,8 +459,6 @@ def rerank_context(
     )[:top_k]
     documents = [row for row in ranked if row.get("kind") == "document"]
     facts = [row for row in ranked if row.get("kind") == "graph"]
-    for rank, row in enumerate(facts, start=1):
-        row["fact_id"] = f"graph-{rank}"
     return documents, facts
 
 
@@ -482,6 +492,7 @@ def build_prompt(
         document_entries.append(
             DOCUMENT_ENTRY_TEMPLATE.format(
                 rank=rank,
+                citation_label=_document_citation_label(row),
                 chunk_id=row.get("chunk_id", ""),
                 document_id=metadata.get("document_id", "unknown"),
                 document_type=metadata.get("document_type", "unknown"),
@@ -501,8 +512,6 @@ def build_prompt(
         graph_entries.append(
             GRAPH_ENTRY_TEMPLATE.format(
                 rank=rank,
-                fact_id=row.get("fact_id", ""),
-                rerank_score=float(row.get("rerank_score", 0.0)),
                 triplet=_triplet_display(row.get("triplet")),
                 text=(row.get("text") or "").strip(),
             )
@@ -512,7 +521,7 @@ def build_prompt(
     if document_entries:
         context_sections.append("DOCUMENT RETRIEVAL:\n" + "\n\n".join(document_entries))
     if graph_entries:
-        context_sections.append("GRAPH RETRIEVAL:\n" + "\n\n".join(graph_entries))
+        context_sections.append("GRAPH CONTEXT:\n" + "\n\n".join(graph_entries))
 
     context = "\n\n".join(context_sections) if context_sections else "No relevant context found."
     return PROMPT_TEMPLATE.format(question=query, context=context).strip()
