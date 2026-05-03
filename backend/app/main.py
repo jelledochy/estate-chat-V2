@@ -180,7 +180,11 @@ def _rag_source_to_chat_source(raw_source: dict[str, Any]) -> SourceDocument | N
     )
 
 
-def _is_uncertain_answer(answer: str, graph_error: str | None) -> tuple[bool, str | None]:
+def _is_uncertain_answer(
+    answer: str,
+    graph_error: str | None,
+    confidence_warning: str | None = None,
+) -> tuple[bool, str | None]:
     uncertainty_markers = (
         "insufficient",
         "missing",
@@ -198,6 +202,8 @@ def _is_uncertain_answer(answer: str, graph_error: str | None) -> tuple[bool, st
             True,
             f"Answered from document retrieval. Graph retrieval was unavailable: {graph_error}",
         )
+    if confidence_warning:
+        return True, confidence_warning
     if is_uncertain:
         return True, "The answer indicates that some supporting context may be missing."
     return False, None
@@ -253,7 +259,12 @@ async def chat(request: ChatRequest) -> ChatResponse:
     ]
     answer = str(rag_result.get("answer") or "").strip() or "No answer returned."
     graph_error = str(rag_result.get("graph_error") or "").strip() or None
-    is_uncertain, uncertainty_message = _is_uncertain_answer(answer, graph_error)
+    confidence_warning = str(rag_result.get("confidence_warning") or "").strip() or None
+    is_uncertain, uncertainty_message = _is_uncertain_answer(
+        answer,
+        graph_error,
+        confidence_warning,
+    )
 
     return ChatResponse(
         answer=answer,

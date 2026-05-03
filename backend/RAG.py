@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -14,7 +15,6 @@ from typing import Any
 import chromadb
 from dotenv import load_dotenv
 from openai import OpenAI
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CHROMA_PATH = PROJECT_ROOT / "backend" / "data" / "chroma_db"
@@ -79,18 +79,6 @@ text:
 """.strip()
 
 
-GRAPH_ALLOWED_OUTPUT_FIELDS = [
-    "id",
-    "label",
-    "name",
-    "text",
-    "triplet",
-    "type",
-    "document_id",
-    "document_type",
-    "page_number",
-]
-
 GRAPH_TEXT_TO_CYPHER_TEMPLATE = """
 Task: Generate a Cypher statement to query a Neo4j graph database.
 Instructions:
@@ -98,11 +86,20 @@ Use only the relationship types and properties in the schema.
 Return only the Cypher statement.
 Do not include explanations, apologies, or markdown fences.
 Respect relationship direction exactly as shown in the schema.
-Use explicit aliases in RETURN clauses, such as person_name, property_name, document_id, or relation_type.
-For questions about how multiple parties relate through the same act or deed, join them through the shared DOCUMENT or PROPERTY node when appropriate.
-Prefer the most specific relationship names present in the schema over semantically similar alternatives.
-When a question asks about a person receiving, donating, buying, selling, or parenting, infer the correct relationship from the schema instead of inventing a new pattern.
-If the question asks who, what, which, or where, return the fields needed to answer that question directly.
+Use explicit aliases in RETURN clauses, such as person_name, property_name,
+document_id, or relation_type.
+Use a broad LIMIT when returning rows. Do not use LIMIT 1 for relationship
+lookups because people can have multiple parents, spouses, children, donors, or
+beneficiaries.
+For questions about how multiple parties relate through the same act or deed,
+join them through the shared DOCUMENT or PROPERTY node when appropriate.
+Prefer the most specific relationship names present in the schema over
+semantically similar alternatives.
+When a question asks about a person receiving, donating, buying, selling, or
+parenting, infer the correct relationship from the schema instead of inventing
+a new pattern.
+If the question asks who, what, which, or where, return the fields needed to
+answer that question directly.
 
 Schema:
 {schema}
@@ -120,6 +117,31 @@ _CYPHER_START_RE = re.compile(
     r"FOREACH|LOAD CSV|USE|SHOW|START DATABASE|STOP DATABASE|ALTER|DROP|LIMIT|ORDER BY|"
     r"SKIP|OFFSET|WHERE)\b",
     flags=re.IGNORECASE,
+)
+_CYPHER_LIMIT_RE = re.compile(r"\bLIMIT\s+(?P<limit>\d+)\b", flags=re.IGNORECASE)
+_GENERATED_CYPHER_RE = re.compile(
+    r"Generated Cypher query:\s*(?P<query>.*?)(?:\n\s*Cypher Response:|\Z)",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_CYPHER_RESPONSE_RE = re.compile(
+    r"Cypher Response:\s*(?P<response>\[.*?\])\s*$",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_CYPHER_RELATION_RE = re.compile(
+    r"(?P<left>\([^)]*\))\s*(?P<left_connector><-|-)\s*"
+    r"\[\s*:\s*(?P<relation>[A-Z_]+)[^\]]*\]\s*"
+    r"(?P<right_connector>->|-)\s*(?P<right>\([^)]*\))",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_CYPHER_NODE_RE = re.compile(
+    r"\(\s*(?P<variable>[A-Za-z_][A-Za-z0-9_]*)?\s*"
+    r"(?::\s*(?P<label>[A-Za-z_][A-Za-z0-9_]*))?\s*"
+    r"(?P<properties>\{[^)]*\})?\s*\)",
+    flags=re.DOTALL,
+)
+_CYPHER_NAME_PROPERTY_RE = re.compile(
+    r"\bname\s*:\s*(['\"])(?P<name>.*?)\1",
+    flags=re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -168,10 +190,32 @@ def _clean_cypher_query(cypher: str) -> str:
 
 
 def _cypher_validator(cypher: str) -> str:
+    """Clean generated Cypher and enforce a safe minimum row limit."""
     cleaned = _clean_cypher_query(cypher)
     if not cleaned:
         raise ValueError("Graph retriever produced an empty Cypher query.")
-    return cleaned
+    return _ensure_cypher_limit(cleaned)
+
+
+def _ensure_cypher_limit(cypher: str) -> str:
+    """Append or widen LIMIT so multi-answer relationship queries are not cut off."""
+    limit_match = _CYPHER_LIMIT_RE.search(cypher)
+    if limit_match:
+        limit = int(limit_match.group("limit"))
+        if limit >= GRAPH_RESULT_LIMIT:
+            return cypher
+        return (
+            cypher[: limit_match.start("limit")]
+            + str(GRAPH_RESULT_LIMIT)
+            + cypher[limit_match.end("limit") :]
+        )
+
+    suffix = ""
+    query = cypher.rstrip()
+    if query.endswith(";"):
+        query = query[:-1].rstrip()
+        suffix = ";"
+    return f"{query}\nLIMIT {GRAPH_RESULT_LIMIT}{suffix}"
 
 
 def load_cross_encoder() -> Any:
@@ -288,7 +332,6 @@ def graph_search(
     *,
     query: str,
     model: str = GRAPH_MODEL,
-    openai_client: OpenAI | None = None,
 ) -> list[dict[str, Any]]:
     retriever = load_graph_retriever(model=model)
     graph_store = getattr(retriever, "_graph_store", None)
@@ -302,63 +345,229 @@ def graph_search(
 
     facts: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for idx, node_with_score in enumerate(nodes[:GRAPH_RESULT_LIMIT], start=1):
-        fact = _node_to_graph_fact(node_with_score, idx)
-        if fact is None:
-            continue
-        key = fact["text"].lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        facts.append(fact)
+    for node_with_score in nodes[:GRAPH_RESULT_LIMIT]:
+        remaining = GRAPH_RESULT_LIMIT - len(facts)
+        for fact in _node_to_graph_facts(node_with_score, max_facts=remaining):
+            triplet_key = _triplet_display(fact.get("triplet"))
+            key = (triplet_key or str(fact.get("text") or "")).casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            fact["fact_id"] = f"graph-{len(facts) + 1}"
+            facts.append(fact)
+            if len(facts) >= GRAPH_RESULT_LIMIT:
+                return facts
     return facts
 
 
-def _node_to_graph_fact(node_with_score: Any, rank: int) -> dict[str, Any] | None:
+def _node_to_graph_facts(
+    node_with_score: Any,
+    *,
+    max_facts: int | None = None,
+) -> list[dict[str, Any]]:
+    """Convert one graph retriever node into one or more atomic graph facts."""
+    if max_facts is not None and max_facts <= 0:
+        return []
+
     node = getattr(node_with_score, "node", node_with_score)
     metadata = getattr(node, "metadata", {}) or {}
-    #response_text = _graph_response_to_text(metadata.get("response"))
-    text = _node_content(node) #or response_text
+    text = _node_content(node)
     if _is_empty_cypher_response(text):
-        return None
+        return []
+
+    cypher_query = _extract_cypher_query(text, metadata)
+    cypher_rows = _extract_cypher_response_rows(text, metadata)
+    if cypher_rows:
+        facts = _cypher_rows_to_graph_facts(
+            query=cypher_query,
+            rows=cypher_rows,
+            metadata=metadata,
+            max_facts=max_facts,
+        )
+        if facts:
+            return facts
+
     triplet = _extract_triplet(metadata.get("triplet")) or _extract_triplet(node)
     if triplet is None:
         triplet = _extract_triplet_from_text(text)
 
     fact_text = _triplet_to_text(triplet) if triplet else text.strip()
     if not fact_text:
+        return []
+
+    return [
+        {
+            "kind": "graph",
+            "fact_id": "",
+            "triplet": triplet,
+            "text": fact_text,
+            "metadata": metadata,
+        }
+    ]
+
+
+def _extract_cypher_query(text: str, metadata: dict[str, Any]) -> str:
+    """Read the generated Cypher query from metadata or rendered node text."""
+    query = metadata.get("query")
+    if isinstance(query, str) and query.strip():
+        return _clean_cypher_query(query)
+
+    match = _GENERATED_CYPHER_RE.search(text)
+    if not match:
+        return ""
+    return _clean_cypher_query(match.group("query"))
+
+
+def _extract_cypher_response_rows(text: str, metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read Cypher result rows from metadata or the rendered response text."""
+    response = metadata.get("response")
+    rows = _coerce_cypher_rows(response)
+    if rows:
+        return rows
+
+    match = _CYPHER_RESPONSE_RE.search(text)
+    if not match:
+        return []
+
+    try:
+        parsed = ast.literal_eval(match.group("response"))
+    except (SyntaxError, ValueError):
+        return []
+    return _coerce_cypher_rows(parsed)
+
+
+def _coerce_cypher_rows(value: Any) -> list[dict[str, Any]]:
+    """Normalize Cypher responses to a list of row dictionaries."""
+    if isinstance(value, str) and value.strip():
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                parsed = parser(value)
+            except (SyntaxError, ValueError, json.JSONDecodeError):
+                continue
+            return _coerce_cypher_rows(parsed)
+
+    if isinstance(value, dict):
+        return [value]
+    if not isinstance(value, list):
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
+def _cypher_rows_to_graph_facts(
+    *,
+    query: str,
+    rows: list[dict[str, Any]],
+    metadata: dict[str, Any],
+    max_facts: int | None = None,
+) -> list[dict[str, Any]]:
+    """Split Cypher result rows into one graph fact per returned row."""
+    facts: list[dict[str, Any]] = []
+    for row in rows:
+        triplet = _infer_triplet_from_cypher_row(query, row)
+        text = _triplet_to_text(triplet) if triplet else _format_cypher_row(row)
+        if not text:
+            continue
+        facts.append(
+            {
+                "kind": "graph",
+                "fact_id": "",
+                "triplet": triplet,
+                "text": text,
+                "metadata": {
+                    **metadata,
+                    "query": query or metadata.get("query"),
+                    "cypher_row": row,
+                },
+            }
+        )
+        if max_facts is not None and len(facts) >= max_facts:
+            break
+    return facts
+
+
+def _infer_triplet_from_cypher_row(
+    query: str,
+    row: dict[str, Any],
+) -> tuple[str, str, str] | None:
+    """Infer subject-relation-object from a single-hop Cypher query and row."""
+    if not query:
         return None
 
+    match = _CYPHER_RELATION_RE.search(query)
+    if not match:
+        return None
+
+    left = _parse_cypher_node(match.group("left"))
+    right = _parse_cypher_node(match.group("right"))
+    relation = match.group("relation").upper()
+
+    if match.group("left_connector") == "<-" and match.group("right_connector") == "-":
+        subject_node, object_node = right, left
+    else:
+        subject_node, object_node = left, right
+
+    subject = _cypher_node_name(subject_node, row)
+    object_ = _cypher_node_name(object_node, row)
+    if not subject or not object_:
+        return None
+    return (subject, relation, object_)
+
+
+def _parse_cypher_node(text: str) -> dict[str, str]:
+    """Extract a Cypher node variable and inline name property."""
+    match = _CYPHER_NODE_RE.fullmatch(text.strip())
+    if not match:
+        return {}
+
+    properties = match.group("properties") or ""
+    name_match = _CYPHER_NAME_PROPERTY_RE.search(properties)
     return {
-        "kind": "graph",
-        "fact_id": f"graph-{rank}",
-        "triplet": triplet,
-        "text": fact_text,
-        "metadata": metadata,
-        "graph_score": getattr(node_with_score, "score", None),
+        "variable": match.group("variable") or "",
+        "label": match.group("label") or "",
+        "name": name_match.group("name").strip() if name_match else "",
     }
 
 
-#def _graph_response_to_text(response: Any) -> str:
-#    if response in (None, "", []):
-#        return ""
-#
-#    rows = response if isinstance(response, list) else [response]
-#    parts: list[str] = []
-#    for row in rows:
-#        if isinstance(row, dict):
-#            values = []
-#            for key, value in row.items():
-#                if value is None:
-#                    continue
-#                values.append(f"{key}: {value}")
-#            if values:
-#                parts.append("; ".join(values))
-#        elif row is not None:
-#            parts.append(str(row))
-#    return "\n".join(parts).strip()
-#
-#
+def _cypher_node_name(node: dict[str, str], row: dict[str, Any]) -> str:
+    """Resolve a node name from inline Cypher properties or returned row keys."""
+    if node.get("name"):
+        return node["name"]
+
+    variable = node.get("variable", "")
+    if variable:
+        candidate_keys = [
+            f"{variable}_name",
+            f"{variable}.name",
+            f"{variable}Name",
+            variable,
+        ]
+        candidate_keys.extend(
+            key
+            for key in row
+            if key.lower().startswith(variable.lower()) and "name" in key.lower()
+        )
+        for key in candidate_keys:
+            value = row.get(key)
+            if value not in (None, ""):
+                return str(value).strip()
+
+    if len(row) == 1:
+        value = next(iter(row.values()))
+        return "" if value in (None, "") else str(value).strip()
+    return ""
+
+
+def _format_cypher_row(row: dict[str, Any]) -> str:
+    """Fallback text for Cypher rows that cannot be shaped as triplets."""
+    parts = [f"{key}: {value}" for key, value in row.items() if value not in (None, "")]
+    return "; ".join(parts).strip()
+
+
 def _is_empty_cypher_response(text: str) -> bool:
     return bool(re.search(r"Cypher Response:\s*\[\s*\]\s*$", text.strip(), flags=re.DOTALL))
 
@@ -371,7 +580,7 @@ def _node_content(node: Any) -> str:
 
 
 def _extract_triplet(value: Any) -> tuple[str, str, str] | None:
-    if isinstance(value, (list, tuple)) and len(value) == 3:
+    if isinstance(value, list | tuple) and len(value) == 3:
         return tuple(str(part).strip() for part in value)  # type: ignore[return-value]
 
     if isinstance(value, str):
@@ -453,7 +662,27 @@ def rerank_context(
     )[:top_k]
     documents = [row for row in ranked if row.get("kind") == "document"]
     facts = [row for row in ranked if row.get("kind") == "graph"]
+    for rank, row in enumerate(facts, start=1):
+        row["fact_id"] = f"graph-{rank}"
     return documents, facts
+
+
+def _low_confidence_warning(
+    search_results: list[dict[str, Any]],
+    graph_results: list[dict[str, Any]],
+) -> str | None:
+    """Warn when every retained context item has a negative reranker score."""
+    scores = [
+        float(row["rerank_score"])
+        for row in [*search_results, *graph_results]
+        if row.get("rerank_score") is not None
+    ]
+    if scores and all(score < 0 for score in scores):
+        return (
+            "Low confidence: all retrieved context has negative reranker scores, "
+            "so the answer may be incomplete or unsupported."
+        )
+    return None
 
 
 def build_prompt(
@@ -563,6 +792,7 @@ def rag(
         graph_results=graph_results,
         top_k=top_k,
     )
+    confidence_warning = _low_confidence_warning(search_results, graph_results)
     prompt = build_prompt(query, search_results, graph_results)
     answer, token_stats = llm(openai_client=openai_client, prompt=prompt, model=model)
 
@@ -591,7 +821,6 @@ def rag(
                 "text": row.get("text"),
                 "cypher_query": (row.get("metadata") or {}).get("query"),
                 "rerank_score": row.get("rerank_score"),
-                "graph_score": row.get("graph_score"),
             }
         )
 
@@ -607,6 +836,8 @@ def rag(
         "sources": sources,
         "graph_sources": graph_sources,
         "graph_error": graph_error,
+        "confidence_warning": confidence_warning,
+        "low_confidence": confidence_warning is not None,
         "prompt_tokens": token_stats["prompt_tokens"],
         "completion_tokens": token_stats["completion_tokens"],
         "total_tokens": token_stats["total_tokens"],
