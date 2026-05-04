@@ -54,6 +54,7 @@ _CYPHER_NAME_PROPERTY_RE = re.compile(
     r"\bname\s*:\s*(['\"])(?P<name>.*?)\1",
     flags=re.IGNORECASE | re.DOTALL,
 )
+_CYPHER_QUOTED_VALUE_RE = r"(['\"])(?P<name>.*?)\1"
 
 
 def _parse_json_list(value: Any) -> list[Any]:
@@ -294,8 +295,8 @@ def _infer_triplet_from_cypher_row(
     else:
         subject_node, object_node = left, right
 
-    subject = _cypher_node_name(subject_node, row)
-    object_ = _cypher_node_name(object_node, row)
+    subject = _cypher_node_name(subject_node, row, query=query)
+    object_ = _cypher_node_name(object_node, row, query=query)
     if not subject or not object_:
         return None
     return (subject, relation, object_)
@@ -316,7 +317,12 @@ def _parse_cypher_node(text: str) -> dict[str, str]:
     }
 
 
-def _cypher_node_name(node: dict[str, str], row: dict[str, Any]) -> str:
+def _cypher_node_name(
+    node: dict[str, str],
+    row: dict[str, Any],
+    *,
+    query: str = "",
+) -> str:
     """Resolve a node name from inline Cypher properties or returned row keys."""
     if node.get("name"):
         return node["name"]
@@ -339,9 +345,33 @@ def _cypher_node_name(node: dict[str, str], row: dict[str, Any]) -> str:
             if value not in (None, ""):
                 return str(value).strip()
 
+        where_value = _cypher_where_node_name(variable, query)
+        if where_value:
+            return where_value
+
     if len(row) == 1:
         value = next(iter(row.values()))
         return "" if value in (None, "") else str(value).strip()
+    return ""
+
+
+def _cypher_where_node_name(variable: str, query: str) -> str:
+    """Resolve `variable.name` from case-sensitive or case-insensitive WHERE filters."""
+    if not variable or not query:
+        return ""
+
+    escaped_variable = re.escape(variable)
+    quoted_value = _CYPHER_QUOTED_VALUE_RE
+    patterns = (
+        rf"toLower\(\s*{escaped_variable}\.name\s*\)\s*=\s*toLower\(\s*{quoted_value}\s*\)",
+        rf"toLower\(\s*{quoted_value}\s*\)\s*=\s*toLower\(\s*{escaped_variable}\.name\s*\)",
+        rf"{escaped_variable}\.name\s*=\s*{quoted_value}",
+        rf"{quoted_value}\s*=\s*{escaped_variable}\.name",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, query, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            return str(match.group("name")).strip()
     return ""
 
 
@@ -486,7 +516,6 @@ def build_prompt(
     graph_results: list[dict[str, Any]] | None = None,
 ) -> str:
     document_entries: list[str] = []
-    graph_entries: list[str] = []
     for rank, row in enumerate(search_results, start=1):
         metadata = row.get("metadata", {})
         document_entries.append(
@@ -508,6 +537,10 @@ def build_prompt(
             )
         )
 
+    context_sections: list[str] = []
+    if document_entries:
+        context_sections.append("DOCUMENT RETRIEVAL:\n" + "\n\n".join(document_entries))
+    graph_entries: list[str] = []
     for rank, row in enumerate(graph_results or [], start=1):
         graph_entries.append(
             GRAPH_ENTRY_TEMPLATE.format(
@@ -517,9 +550,6 @@ def build_prompt(
             )
         )
 
-    context_sections: list[str] = []
-    if document_entries:
-        context_sections.append("DOCUMENT RETRIEVAL:\n" + "\n\n".join(document_entries))
     if graph_entries:
         context_sections.append("GRAPH CONTEXT:\n" + "\n\n".join(graph_entries))
 

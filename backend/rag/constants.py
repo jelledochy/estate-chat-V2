@@ -80,6 +80,12 @@ Do not include explanations, apologies, or markdown fences.
 Respect relationship direction exactly as shown in the schema.
 Use explicit aliases in RETURN clauses, such as person_name, property_name,
 document_id, or relation_type.
+When matching names from the question, use case-insensitive WHERE clauses
+instead of inline property maps. For example, write
+`MATCH (person:PERSON) WHERE toLower(person.name) = toLower('thomas janssen')`
+rather than `MATCH (person:PERSON {name: 'thomas janssen'})`.
+Apply this to PERSON, ORGANIZATION, PROPERTY, DOCUMENT, and any other named
+entity with a name-like property.
 Use a broad LIMIT when returning rows. Do not use LIMIT 1 for relationship
 lookups because people can have multiple parents, spouses, children, donors, or
 beneficiaries.

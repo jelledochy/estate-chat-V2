@@ -66,15 +66,16 @@ def rag(
             graph_results = []
             graph_error = str(exc)
 
-    document_results, graph_results = rerank_context(
+    neo4j_graph_results = graph_results
+    document_results, prompt_graph_results = rerank_context(
         query=query,
         document_results=document_results,
-        graph_results=graph_results,
+        graph_results=neo4j_graph_results,
         top_k=top_k,
     )
-    prompt = build_prompt(query, document_results, graph_results)
+    prompt = build_prompt(query, document_results, prompt_graph_results)
     answer, token_stats = llm(openai_client=openai_client, prompt=prompt, model=model)
-    confidence_warning = _low_confidence_warning(document_results, graph_results)
+    confidence_warning = _low_confidence_warning(document_results, prompt_graph_results)
 
     return {
         "answer": answer,
@@ -86,6 +87,8 @@ def rag(
         "top_k": top_k,
         "response_time_seconds": round(time() - start_time, 3),
         "sources": _document_sources(document_results),
+        "neo4j_graph_context": _graph_context_items(neo4j_graph_results),
+        "prompt_graph_context": _graph_context_items(prompt_graph_results),
         "graph_error": graph_error,
         "confidence_warning": confidence_warning,
         "low_confidence": confidence_warning is not None,
@@ -141,6 +144,54 @@ def _document_sources(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             source["rerank_score"] = row.get("rerank_score")
 
     return sorted(grouped.values(), key=lambda source: int(source.get("rank") or 0))
+
+
+def _graph_context_items(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for rank, row in enumerate(rows, start=1):
+        metadata = row.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        items.append(
+            {
+                "rank": rank,
+                "triplet": _graph_triplet_parts(row.get("triplet")),
+                "text": str(row.get("text") or "").strip(),
+                "cypher_query": str(metadata.get("query") or "").strip() or None,
+                "cypher_row": _json_safe_dict(metadata.get("cypher_row")),
+                "rerank_score": _float_or_none(row.get("rerank_score")),
+            }
+        )
+    return items
+
+
+def _graph_triplet_parts(value: Any) -> list[str]:
+    if not isinstance(value, list | tuple) or len(value) != 3:
+        return []
+    parts = [str(part).strip() for part in value]
+    return parts if all(parts) else []
+
+
+def _json_safe_dict(value: Any) -> dict[str, Any]:
+    return _json_safe(value) if isinstance(value, dict) else {}
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list | tuple | set):
+        return [_json_safe(item) for item in value]
+    return str(value)
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _positive_int_or_none(value: Any) -> int | None:

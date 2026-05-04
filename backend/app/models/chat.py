@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from enum import Enum
+from typing import Any
 
 from pydantic import Field, model_validator
 
@@ -30,6 +31,21 @@ class SourceDocument(AppBaseModel):
     page_numbers: list[int] = Field(default_factory=list)
     excerpt: str | None = None
     citation_label: str | None = None
+
+
+class GraphContextItem(AppBaseModel):
+    rank: int | None = Field(default=None, ge=1)
+    triplet: list[str] = Field(default_factory=list, max_length=3)
+    text: str = ""
+    cypher_query: str | None = None
+    cypher_row: dict[str, Any] = Field(default_factory=dict)
+    rerank_score: float | None = None
+
+
+class GraphContext(AppBaseModel):
+    neo4j: list[GraphContextItem] = Field(default_factory=list)
+    prompt: list[GraphContextItem] = Field(default_factory=list)
+    error: str | None = None
 
 
 class TransactionType(str, Enum):
@@ -87,6 +103,7 @@ class StructuredAnswer(AppBaseModel):
 class ChatResponse(AppBaseModel):
     answer: str = Field(..., min_length=1)
     sources: list[SourceDocument] = Field(default_factory=list)
+    graph_context: GraphContext = Field(default_factory=GraphContext)
     structured_answer: StructuredAnswer | None = None
     is_uncertain: bool = False
     uncertainty_message: str | None = None

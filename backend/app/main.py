@@ -25,9 +25,21 @@ for import_path in (PROJECT_ROOT, BACKEND_ROOT):
 from backend.RAG import DEFAULT_LLM_MODEL, rag  # noqa: E402
 
 try:
-    from app.models.chat import ChatRequest, ChatResponse, SourceDocument
+    from app.models.chat import (
+        ChatRequest,
+        ChatResponse,
+        GraphContext,
+        GraphContextItem,
+        SourceDocument,
+    )
 except ModuleNotFoundError:
-    from backend.app.models.chat import ChatRequest, ChatResponse, SourceDocument
+    from backend.app.models.chat import (  # type: ignore[no-redef]
+        ChatRequest,
+        ChatResponse,
+        GraphContext,
+        GraphContextItem,
+        SourceDocument,
+    )
 
 
 class HealthResponse(BaseModel):
@@ -203,6 +215,61 @@ def _page_numbers_from_source(raw_source: dict[str, Any]) -> list[int]:
     return sorted(page_numbers)
 
 
+def _rag_graph_context_to_chat_context(rag_result: dict[str, Any]) -> GraphContext:
+    return GraphContext(
+        neo4j=_graph_context_items_from_raw(rag_result.get("neo4j_graph_context")),
+        prompt=_graph_context_items_from_raw(rag_result.get("prompt_graph_context")),
+        error=str(rag_result.get("graph_error") or "").strip() or None,
+    )
+
+
+def _graph_context_items_from_raw(raw_items: Any) -> list[GraphContextItem]:
+    if not isinstance(raw_items, list):
+        return []
+
+    items: list[GraphContextItem] = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            continue
+        items.append(
+            GraphContextItem(
+                rank=_positive_int_or_none(raw_item.get("rank")),
+                triplet=_graph_triplet(raw_item.get("triplet")),
+                text=str(raw_item.get("text") or "").strip(),
+                cypher_query=str(raw_item.get("cypher_query") or "").strip() or None,
+                cypher_row=(
+                    raw_item.get("cypher_row")
+                    if isinstance(raw_item.get("cypher_row"), dict)
+                    else {}
+                ),
+                rerank_score=_float_or_none(raw_item.get("rerank_score")),
+            )
+        )
+    return items
+
+
+def _graph_triplet(value: Any) -> list[str]:
+    if not isinstance(value, list | tuple) or len(value) != 3:
+        return []
+    parts = [str(part).strip() for part in value]
+    return parts if all(parts) else []
+
+
+def _positive_int_or_none(value: Any) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _is_uncertain_answer(
     answer: str,
     graph_error: str | None,
@@ -262,7 +329,6 @@ async def chat(request: ChatRequest) -> ChatResponse:
             rag,
             query=request.question,
             model=DEFAULT_LLM_MODEL,
-            top_k=request.top_k,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -292,6 +358,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
     return ChatResponse(
         answer=answer,
         sources=sources,
+        graph_context=_rag_graph_context_to_chat_context(rag_result),
         structured_answer=None,
         is_uncertain=is_uncertain,
         uncertainty_message=uncertainty_message,
