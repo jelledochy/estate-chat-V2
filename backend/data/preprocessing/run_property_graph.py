@@ -33,10 +33,12 @@ NEO4J_URL = os.getenv("NEO4J_URL") or os.getenv("NEO4J_URI", "bolt://localhost:7
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "neo4jpassword")
 NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
-LLM_MODEL = os.getenv("OPENAI_GRAPH_MODEL") or os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+LLM_MODEL = os.getenv("OPENAI_GRAPH_MODEL") or os.getenv("OPENAI_CHAT_MODEL", "gpt-5.4-mini")
 EMBEDDING_MODEL = os.getenv("OPENAI_GRAPH_EMBEDDING_MODEL", "text-embedding-3-small")
 MAX_TRIPLETS_PER_CHUNK = 12
 NUM_WORKERS = 4
+GRAPH_SEMANTIC_BUFFER_SIZE = 3
+GRAPH_SEMANTIC_BREAKPOINT_PERCENTILE = 90
 
 # The graph schema is intentionally estate-document specific. It guides the LLM
 # toward facts that will later be useful as normalized graph-context text.
@@ -215,6 +217,35 @@ def build_graph_store() -> object:
     )
 
 
+def _graph_chunk_id_func(index: int, document: object) -> str:
+    metadata = getattr(document, "metadata", {}) or {}
+    source_id = metadata.get("source_id") or getattr(document, "id_", None)
+    source_id = source_id or getattr(document, "node_id", "graph-source")
+    return f"{source_id}-g{index:04d}"
+
+
+def build_graph_transformations(embed_model: object) -> list[object]:
+    """
+    Build graph-only semantic chunking transformations.
+
+    Vector search continues to use backend/data/preprocessing/run_embeddings.py and
+    its RecursiveCharacterTextSplitter. This splitter is only used by the property
+    graph build so graph extraction sees semantically coherent chunks.
+    """
+    from llama_index.core.node_parser import SemanticSplitterNodeParser
+
+    return [
+        SemanticSplitterNodeParser(
+            embed_model=embed_model,
+            buffer_size=GRAPH_SEMANTIC_BUFFER_SIZE,
+            breakpoint_percentile_threshold=GRAPH_SEMANTIC_BREAKPOINT_PERCENTILE,
+            include_metadata=True,
+            include_prev_next_rel=True,
+            id_func=_graph_chunk_id_func,
+        )
+    ]
+
+
 def verify_neo4j_connection() -> None:
     """
     Fail fast if Neo4j is unavailable before LlamaIndex starts graph ingestion.
@@ -252,7 +283,7 @@ def build_property_graph_index(
     Build the LlamaIndex PropertyGraphIndex from prepared page documents.
 
     The index does three things:
-    1. chunks the input documents into LlamaIndex nodes,
+    1. semantically chunks the input documents into LlamaIndex nodes,
     2. asks the LLM extractor for schema-guided estate-document triples,
     3. stores entities, relations, source chunks, and embeddings in the graph store.
     """
@@ -273,6 +304,7 @@ def build_property_graph_index(
 
     llm = OpenAI(model=LLM_MODEL, temperature=0.0)
     embed_model = OpenAIEmbedding(model_name=EMBEDDING_MODEL)
+    graph_transformations = build_graph_transformations(embed_model)
     kg_extractors = [
         ImplicitPathExtractor(),
         SchemaLLMPathExtractor(
@@ -293,6 +325,7 @@ def build_property_graph_index(
         kg_extractors=kg_extractors,
         property_graph_store=graph_store,
         embed_kg_nodes=True,
+        transformations=graph_transformations,
         show_progress=True,
     )
 
@@ -355,6 +388,9 @@ def main() -> int:
         f"store=neo4j documents={len(extracted_documents)} "
         f"llama_documents={len(llama_documents)} failed_documents={len(failures)} "
         f"llm_model={LLM_MODEL} embedding_model={EMBEDDING_MODEL} "
+        f"graph_chunker=semantic "
+        f"graph_semantic_buffer_size={GRAPH_SEMANTIC_BUFFER_SIZE} "
+        f"graph_semantic_breakpoint_percentile={GRAPH_SEMANTIC_BREAKPOINT_PERCENTILE} "
         f"strict_schema={False} took_seconds={took:.1f}"
     )
     print(
