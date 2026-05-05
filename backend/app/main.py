@@ -22,7 +22,7 @@ for import_path in (PROJECT_ROOT, BACKEND_ROOT):
     if path_text not in sys.path:
         sys.path.insert(0, path_text)
 
-from backend.RAG import DEFAULT_LLM_MODEL, rag  # noqa: E402
+from rag.RAG import DEFAULT_LLM_MODEL, rag  # noqa: E402
 
 try:
     from app.models.chat import (
