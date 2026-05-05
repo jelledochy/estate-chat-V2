@@ -79,3 +79,4 @@ def graph_search(
             if len(facts) >= GRAPH_RESULT_LIMIT:
                 return facts
     return facts
+

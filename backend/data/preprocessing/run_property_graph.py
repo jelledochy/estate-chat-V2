@@ -29,21 +29,14 @@ from backend.app.models.documents import ExtractedDocument  # noqa: E402
 
 INPUT_DIR = BACKEND_DIR / "data" / "extracted"
 
-DEFAULT_LLM_MODEL = "gpt-4o-mini"
-DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
-DEFAULT_MAX_TRIPLETS_PER_CHUNK = 12
-DEFAULT_NUM_WORKERS = 4
-
 NEO4J_URL = os.getenv("NEO4J_URL") or os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "neo4jpassword")
 NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
-LLM_MODEL = os.getenv("OPENAI_GRAPH_MODEL") or os.getenv("OPENAI_CHAT_MODEL", DEFAULT_LLM_MODEL)
-EMBEDDING_MODEL = os.getenv("OPENAI_GRAPH_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
-MAX_TRIPLETS_PER_CHUNK = DEFAULT_MAX_TRIPLETS_PER_CHUNK
-NUM_WORKERS = DEFAULT_NUM_WORKERS
-STRICT_SCHEMA = False
-SHOW_PROGRESS = True
+LLM_MODEL = os.getenv("OPENAI_GRAPH_MODEL") or os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+EMBEDDING_MODEL = os.getenv("OPENAI_GRAPH_EMBEDDING_MODEL", "text-embedding-3-small")
+MAX_TRIPLETS_PER_CHUNK = 12
+NUM_WORKERS = 4
 
 # The graph schema is intentionally estate-document specific. It guides the LLM
 # toward facts that will later be useful as normalized graph-context text.
@@ -168,13 +161,7 @@ def build_llama_documents(
     That keeps page provenance attached to graph source chunks, which matters
     when graph facts are later rendered back into prompt context.
     """
-    try:
-        from llama_index.core import Document
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "LlamaIndex 0.14+ is required for PropertyGraphIndex. "
-            "Run `poetry install` after updating pyproject.toml."
-        ) from exc
+    from llama_index.core import Document
 
     llama_documents: list[object] = []
     for source_path, document in extracted_documents:
@@ -293,7 +280,7 @@ def build_property_graph_index(
             possible_entities=EstateEntity,
             possible_relations=EstateRelation,
             kg_validation_schema=KG_VALIDATION_SCHEMA,
-            strict=STRICT_SCHEMA,
+            strict=False,
             num_workers=NUM_WORKERS,
             max_triplets_per_chunk=MAX_TRIPLETS_PER_CHUNK,
         ),
@@ -306,7 +293,7 @@ def build_property_graph_index(
         kg_extractors=kg_extractors,
         property_graph_store=graph_store,
         embed_kg_nodes=True,
-        show_progress=SHOW_PROGRESS,
+        show_progress=True,
     )
 
 
@@ -368,7 +355,7 @@ def main() -> int:
         f"store=neo4j documents={len(extracted_documents)} "
         f"llama_documents={len(llama_documents)} failed_documents={len(failures)} "
         f"llm_model={LLM_MODEL} embedding_model={EMBEDDING_MODEL} "
-        f"strict_schema={STRICT_SCHEMA} took_seconds={took:.1f}"
+        f"strict_schema={False} took_seconds={took:.1f}"
     )
     print(
         "Graph facts were written to Neo4j. "

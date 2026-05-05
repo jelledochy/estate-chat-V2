@@ -19,7 +19,6 @@ from backend.rag.constants import (  # noqa: E402
     GRAPH_MODEL,
     RETRIEVAL_CANDIDATE_MULTIPLIER,
 )
-from backend.rag.graph_search import graph_search  # noqa: E402
 from backend.rag.helpers import (  # noqa: E402
     _document_citation_label,
     _low_confidence_warning,
@@ -27,7 +26,9 @@ from backend.rag.helpers import (  # noqa: E402
     llm,
     rerank_context,
 )
-from backend.rag.vector_search import load_collection, search  # noqa: E402
+from backend.rag.search.graph_search import graph_search  # noqa: E402
+from backend.rag.search.hybrid_document_search import search_source_documents  # noqa: E402
+from backend.rag.search.vector_search import load_collection  # noqa: E402
 
 
 def rag(
@@ -47,7 +48,7 @@ def rag(
     graph_error = None
     with ThreadPoolExecutor(max_workers=2) as executor:
         document_future = executor.submit(
-            search,
+            search_source_documents,
             openai_client=openai_client,
             collection=collection,
             query=query,
