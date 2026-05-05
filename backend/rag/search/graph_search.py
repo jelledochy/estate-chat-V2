@@ -4,32 +4,31 @@ from functools import lru_cache
 from typing import Any
 
 from backend.rag.constants import (
-    GRAPH_MODEL,
+    GRAPH_EMBEDDING_MODEL_NAME,
+    GRAPH_EXPANSION_DEPTH,
     GRAPH_RESULT_LIMIT,
-    GRAPH_TEXT_TO_CYPHER_TEMPLATE,
+    GRAPH_VECTOR_TOP_K,
     NEO4J_DATABASE,
     NEO4J_PASSWORD,
     NEO4J_URL,
     NEO4J_USER,
 )
-from backend.rag.helpers import _cypher_validator, _node_to_graph_facts, _triplet_display
+from backend.rag.helpers import _node_to_graph_facts, _triplet_display
 
 
 @lru_cache(maxsize=4)
-def load_graph_retriever(*, model: str = GRAPH_MODEL) -> Any:
+def load_graph_retriever(*, embedding_model: str) -> Any:
     try:
-        from llama_index.core.indices.property_graph import TextToCypherRetriever
+        from llama_index.core.indices.property_graph import VectorContextRetriever
     except ModuleNotFoundError as exc:
         raise RuntimeError(
             "llama-index is required for property-graph retrieval. "
             "Install the project dependencies before using graph context."
         ) from exc
-    except ImportError:
-        from llama_index.core.retrievers import TextToCypherRetriever
 
     try:
+        from llama_index.embeddings.openai import OpenAIEmbedding
         from llama_index.graph_stores.neo4j import Neo4jPropertyGraphStore
-        from llama_index.llms.openai import OpenAI as LlamaOpenAI
     except ModuleNotFoundError as exc:
         raise RuntimeError(
             "llama-index Neo4j/OpenAI integrations are required for graph retrieval."
@@ -41,21 +40,22 @@ def load_graph_retriever(*, model: str = GRAPH_MODEL) -> Any:
         url=NEO4J_URL,
         database=NEO4J_DATABASE,
     )
-    return TextToCypherRetriever(
+    return VectorContextRetriever(
         graph_store,
-        llm=LlamaOpenAI(model=model, temperature=0.0),
-        text_to_cypher_template=GRAPH_TEXT_TO_CYPHER_TEMPLATE,
-        cypher_validator=_cypher_validator,
-        include_raw_response_as_metadata=True,
+        embed_model=OpenAIEmbedding(model_name=embedding_model),
+        include_text=False,
+        similarity_top_k=GRAPH_VECTOR_TOP_K,
+        path_depth=GRAPH_EXPANSION_DEPTH,
+        limit=GRAPH_RESULT_LIMIT,
     )
 
 
 def graph_search(
     *,
     query: str,
-    model: str = GRAPH_MODEL,
+    embedding_model: str = GRAPH_EMBEDDING_MODEL_NAME,
 ) -> list[dict[str, Any]]:
-    retriever = load_graph_retriever(model=model)
+    retriever = load_graph_retriever(embedding_model=embedding_model)
     graph_store = getattr(retriever, "_graph_store", None)
     if graph_store is not None:
         node_count = graph_store.structured_query("MATCH (n) RETURN count(n) AS count")
@@ -79,4 +79,3 @@ def graph_search(
             if len(facts) >= GRAPH_RESULT_LIMIT:
                 return facts
     return facts
-

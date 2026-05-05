@@ -35,9 +35,9 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "neo4jpassword")
 NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 LLM_MODEL = os.getenv("OPENAI_GRAPH_MODEL") or os.getenv("OPENAI_CHAT_MODEL", "gpt-5.4-mini")
 EMBEDDING_MODEL = os.getenv("OPENAI_GRAPH_EMBEDDING_MODEL", "text-embedding-3-small")
-MAX_TRIPLETS_PER_CHUNK = 12
+MAX_TRIPLETS_PER_CHUNK = 20
 NUM_WORKERS = 4
-GRAPH_SEMANTIC_BUFFER_SIZE = 3
+GRAPH_SEMANTIC_BUFFER_SIZE = 2
 GRAPH_SEMANTIC_BREAKPOINT_PERCENTILE = 90
 
 # The graph schema is intentionally estate-document specific. It guides the LLM
@@ -73,41 +73,77 @@ EstateRelation = Literal[
 ]
 
 KG_VALIDATION_SCHEMA: dict[str, list[str]] = {
-    "PERSON": [
-        "APPEARED_BEFORE",
-        "BENEFICIARY_OF",
-        "BORROWER_OF",
-        "BUYER_OF",
-        "CHILD_OF",
-        "DONEE_OF",
-        "DONOR_OF",
-        "GRANTS_POWER_OF_ATTORNEY_TO",
-        "NOTARY_OF",
-        "OWNS",
-        "PARENT_OF",
-        "RESIDES_AT",
-        "SELLER_OF",
-        "SIGNED",
-        "SPOUSE_OF",
-    ],
-    "ORGANIZATION": [
-        "BORROWER_OF",
-        "BUYER_OF",
-        "LENDER_OF",
-        "OWNS",
-        "SELLER_OF",
-        "SIGNED",
-        "TRANSFERS_TO",
-    ],
-    "PROPERTY": [
-        "SECURED_BY",
-    ],
-    "DOCUMENT": [
-        "CONTAINS_PROPERTY",
-        "MENTIONS",
-        "REFERENCES",
-    ],
+    "relationships": [
+        ("DOCUMENT", "CONTAINS_PROPERTY", "PROPERTY"),
+        ("DOCUMENT", "MENTIONS", "ORGANIZATION"),
+        ("DOCUMENT", "MENTIONS", "PERSON"),
+        ("DOCUMENT", "MENTIONS", "PROPERTY"),
+        ("DOCUMENT", "REFERENCES", "DOCUMENT"),
+        ("ORGANIZATION", "BORROWER_OF", "DOCUMENT"),
+        ("ORGANIZATION", "BUYER_OF", "DOCUMENT"),
+        ("ORGANIZATION", "BUYER_OF", "PROPERTY"),
+        ("ORGANIZATION", "LENDER_OF", "DOCUMENT"),
+        ("ORGANIZATION", "OWNS", "PROPERTY"),
+        ("ORGANIZATION", "SELLER_OF", "DOCUMENT"),
+        ("ORGANIZATION", "SELLER_OF", "PROPERTY"),
+        ("ORGANIZATION", "SIGNED", "DOCUMENT"),
+        ("PERSON", "BENEFICIARY_OF", "DOCUMENT"),
+        ("PERSON", "BORROWER_OF", "DOCUMENT"),
+        ("PERSON", "BUYER_OF", "DOCUMENT"),
+        ("PERSON", "BUYER_OF", "PROPERTY"),
+        ("PERSON", "CHILD_OF", "PERSON"),
+        ("PERSON", "DONEE_OF", "DOCUMENT"),
+        ("PERSON", "DONEE_OF", "PERSON"),
+        ("PERSON", "DONOR_OF", "DOCUMENT"),
+        ("PERSON", "DONOR_OF", "PERSON"),
+        ("PERSON", "GRANTS_POWER_OF_ATTORNEY_TO", "PERSON"),
+        ("PERSON", "LENDER_OF", "DOCUMENT"),
+        ("PERSON", "NOTARY_OF", "DOCUMENT"),
+        ("PERSON", "OWNS", "PROPERTY"),
+        ("PERSON", "PARENT_OF", "PERSON"),
+        ("PERSON", "RESIDES_AT", "PROPERTY"),
+        ("PERSON", "SELLER_OF", "DOCUMENT"),
+        ("PERSON", "SELLER_OF", "PROPERTY"),
+        ("PERSON", "SIGNED", "DOCUMENT"),
+        ("PERSON", "SPOUSE_OF", "PERSON"),
+        ("PROPERTY", "SECURED_BY", "DOCUMENT"),
+    ]
 }
+
+ESTATE_SCHEMA_EXTRACT_PROMPT = """
+Given the following estate or notarial document text, extract a knowledge graph
+according to the provided schema. Extract at most {max_triplets_per_chunk} paths.
+
+Entity quality rules:
+- A PERSON node must be a concrete, named human being, such as "Thomas Janssen"
+  or "Sarah Janssen-Peeters".
+- Never create PERSON nodes for legal roles, generic labels, pronouns, groups,
+  placeholders, or template text.
+- If a role word refers to a nearby named person, use the named person as the
+  PERSON node. If no concrete name is given, do not extract that relationship.
+- Do not create nodes from bracketed placeholders, all-lowercase role labels,
+  section headings, table headers, signature labels, or form instructions.
+- Every extracted relationship must connect concrete named entities or concrete
+  documents/properties. Skip otherwise valid-looking relationships when an
+  endpoint would be a role, placeholder, pronoun, or group label.
+
+Family relationship rules:
+- Treat words like father, mother, parent, son, daughter, child, spouse, married,
+  husband, and wife as high-priority family facts.
+- If the text says A is the father, mother, or parent of B, extract both
+  (A, PARENT_OF, B) and (B, CHILD_OF, A).
+- If the text says A is the son, daughter, or child of B, extract both
+  (A, CHILD_OF, B) and (B, PARENT_OF, A).
+- If the text says A is the spouse, husband, wife, or married partner of B,
+  extract both (A, SPOUSE_OF, B) and (B, SPOUSE_OF, A).
+- For table rows with a Relationship column, interpret the relationship relative
+  to the person named in that row.
+- Do not infer family relationships from donations, wills or asset documents.
+
+-------
+{text}
+-------
+""".strip()
 
 
 def collect_extracted_paths(input_dir: Path) -> list[Path]:
@@ -293,6 +329,7 @@ def build_property_graph_index(
             ImplicitPathExtractor,
             SchemaLLMPathExtractor,
         )
+        from llama_index.core.prompts import PromptTemplate
         from llama_index.embeddings.openai import OpenAIEmbedding
         from llama_index.llms.openai import OpenAI
     except ModuleNotFoundError as exc:
@@ -309,10 +346,11 @@ def build_property_graph_index(
         ImplicitPathExtractor(),
         SchemaLLMPathExtractor(
             llm=llm,
+            extract_prompt=PromptTemplate(ESTATE_SCHEMA_EXTRACT_PROMPT),
             possible_entities=EstateEntity,
             possible_relations=EstateRelation,
             kg_validation_schema=KG_VALIDATION_SCHEMA,
-            strict=False,
+            strict=True,
             num_workers=NUM_WORKERS,
             max_triplets_per_chunk=MAX_TRIPLETS_PER_CHUNK,
         ),

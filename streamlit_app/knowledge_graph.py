@@ -62,7 +62,7 @@ def render_graph_context(graph_context: dict[str, Any], key_prefix: str) -> None
             _render_graph_context_view(
                 neo4j_items,
                 heading="Neo4j returned graph",
-                caption="Facts returned by the generated Cypher query before reranking.",
+                caption="Facts returned by vector graph expansion before reranking.",
             )
             return
 

@@ -3,10 +3,18 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env", override=True)
+
 CHROMA_PATH = PROJECT_ROOT / "backend" / "data" / "chroma_db"
 COLLECTION_NAME = "estate_documents"
 EMBEDDING_MODEL_NAME = "text-embedding-3-small"
+GRAPH_EMBEDDING_MODEL_NAME = os.getenv(
+    "OPENAI_GRAPH_EMBEDDING_MODEL",
+    EMBEDDING_MODEL_NAME,
+)
 DEFAULT_TOP_K = 5
 DEFAULT_LLM_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
 CROSS_ENCODER_MODEL_NAME = os.getenv(
@@ -14,7 +22,9 @@ CROSS_ENCODER_MODEL_NAME = os.getenv(
     "cross-encoder/ms-marco-MiniLM-L-6-v2",
 )
 RETRIEVAL_CANDIDATE_MULTIPLIER = int(os.getenv("RAG_RETRIEVAL_CANDIDATE_MULTIPLIER", "4"))
-GRAPH_RESULT_LIMIT = int(os.getenv("RAG_GRAPH_RESULT_LIMIT", "25"))
+GRAPH_RESULT_LIMIT = int(os.getenv("RAG_GRAPH_RESULT_LIMIT", "50"))
+GRAPH_VECTOR_TOP_K = int(os.getenv("RAG_GRAPH_VECTOR_TOP_K", "5"))
+GRAPH_EXPANSION_DEPTH = int(os.getenv("RAG_GRAPH_EXPANSION_DEPTH", "1"))
 GRAPH_MODEL = os.getenv("OPENAI_GRAPH_MODEL") or DEFAULT_LLM_MODEL
 NEO4J_URL = os.getenv("NEO4J_URL") or os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")

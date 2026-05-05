@@ -16,7 +16,9 @@ from backend.rag.constants import (  # noqa: E402
     DEFAULT_LLM_MODEL,
     DEFAULT_TOP_K,
     EMBEDDING_MODEL_NAME,
-    GRAPH_MODEL,
+    GRAPH_EMBEDDING_MODEL_NAME,
+    GRAPH_EXPANSION_DEPTH,
+    GRAPH_VECTOR_TOP_K,
     RETRIEVAL_CANDIDATE_MULTIPLIER,
 )
 from backend.rag.helpers import (  # noqa: E402
@@ -35,7 +37,7 @@ def rag(
     *,
     query: str,
     model: str = DEFAULT_LLM_MODEL,
-    graph_model: str = GRAPH_MODEL,
+    embedding_model: str = GRAPH_EMBEDDING_MODEL_NAME,
     top_k: int = DEFAULT_TOP_K,
 ) -> dict[str, Any]:
     if top_k < 1:
@@ -57,7 +59,7 @@ def rag(
         graph_future = executor.submit(
             graph_search,
             query=query,
-            model=graph_model,
+            embedding_model=embedding_model,
         )
 
         document_results = document_future.result()
@@ -81,7 +83,11 @@ def rag(
     return {
         "answer": answer,
         "model_used": model,
-        "graph_model_used": graph_model,
+        "graph_embedding_model_used": embedding_model,
+        "graph_retrieval_strategy": "vector_context",
+        "graph_embedding_model": GRAPH_EMBEDDING_MODEL_NAME,
+        "graph_vector_top_k": GRAPH_VECTOR_TOP_K,
+        "graph_expansion_depth": GRAPH_EXPANSION_DEPTH,
         "embedding_model": EMBEDDING_MODEL_NAME,
         "reranker_model": CROSS_ENCODER_MODEL_NAME,
         "collection": COLLECTION_NAME,

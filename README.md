@@ -45,6 +45,9 @@ Set these in your `.env` file:
 - `OPENAI_API_KEY` (required for LLM functionality)
 - `OPENAI_GRAPH_MODEL` (optional, defaults to `OPENAI_CHAT_MODEL` or `gpt-4o-mini`)
 - `OPENAI_GRAPH_EMBEDDING_MODEL` (optional, defaults to `text-embedding-3-small`)
+- `RAG_GRAPH_VECTOR_TOP_K` (optional, defaults to `5`; nearest graph entities to seed expansion)
+- `RAG_GRAPH_EXPANSION_DEPTH` (optional, defaults to `1`; graph path depth from those entities)
+- `RAG_GRAPH_RESULT_LIMIT` (optional, defaults to `25`; maximum graph facts returned)
 
 ## Property Graph Build
 
@@ -71,7 +74,7 @@ Or from the preprocessing folder:
 python run_property_graph.py
 ```
 
-This stage only creates the graph. The later prompt-composition stage can retrieve graph paths and normalize them into text alongside document chunks.
+This stage only creates the graph. The later prompt-composition stage embeds the query, retrieves the closest graph entities with LlamaIndex `VectorContextRetriever`, expands graph paths around those entities, and normalizes the returned paths into text alongside document chunks.
 
 ## Architecture
 
